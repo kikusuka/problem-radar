@@ -104,7 +104,12 @@ def hn(query: str, limit: int = 20, since_days: int = 730, **_) -> Result:
 
 
 # ------------------------------------------------------------- Stack Exchange
+_se_cooldown = {"until": 0.0}
+
+
 def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
+    if time.time() < _se_cooldown["until"]:
+        return Result([], False, "rate limited (429); cooling down, set STACKEXCHANGE_KEY for a much larger free quota")
     params = {
         "order": "desc", "sort": "relevance", "q": query, "site": site,
         "pagesize": min(limit, 50), "filter": "withbody",
@@ -113,6 +118,9 @@ def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
         params["key"] = os.environ["STACKEXCHANGE_KEY"]
     data, err = _get("https://api.stackexchange.com/2.3/search/advanced", params)
     if data is None:
+        if "429" in err:
+            _se_cooldown["until"] = time.time() + 120  # stop hammering a limited quota
+            err += "; set STACKEXCHANGE_KEY (free) for a much larger quota"
         return Result([], False, err)
     out = []
     for q in data.get("items", []):
@@ -148,9 +156,9 @@ def _reddit_oauth() -> str:
     return _reddit_token["value"]
 
 
-def reddit(query: str, limit: int = 20, subreddit: str | None = None, **_) -> Result:
+def reddit(query: str, limit: int = 20, subreddit: str | None = None, sort: str = "relevance", **_) -> Result:
     token = _reddit_oauth()
-    params = {"q": query, "sort": "relevance", "t": "year", "limit": min(limit, 50)}
+    params = {"q": query, "sort": sort, "t": "year", "limit": min(limit, 50)}
     if subreddit:
         params["restrict_sr"] = 1
     path = f"r/{subreddit}/search" if subreddit else "search"
@@ -169,6 +177,103 @@ def reddit(query: str, limit: int = 20, subreddit: str | None = None, **_) -> Re
                  d.get("score") or 0, d.get("num_comments") or 0, _iso(d.get("created_utc")),
                  {"site": d.get("subreddit") or ""})
         )
+    return Result(out)
+
+
+PAIN_QUERY = "problem OR struggle OR frustrating OR expensive OR wish OR hate OR annoying OR broken"
+
+
+def _reddit_json(path: str, params: dict):
+    token = _reddit_oauth()
+    if token:
+        return _get(f"https://oauth.reddit.com/{path}", params, {**_reddit_ua(), "Authorization": f"bearer {token}"})
+    return _get(f"https://www.reddit.com/{path}.json", params, _reddit_ua())
+
+
+def find_subreddits(query: str, want: int = 3) -> tuple[list[str], str]:
+    """Communities where this topic is discussed. Their members are the people who have the problem."""
+    from .pain import _has_word, content_words
+    data, err = _reddit_json("subreddits/search", {"q": query, "limit": 15, "sort": "relevance"})
+    if data is None:
+        return [], err
+    words = content_words(query)
+    found = []
+    for c in (data.get("data") or {}).get("children", []):
+        d = c.get("data", {})
+        if d.get("over18") or (d.get("subscribers") or 0) < 300:
+            continue
+        label = " ".join([d.get("display_name") or "", d.get("title") or "", d.get("public_description") or ""])
+        if words and not any(_has_word(w, label) for w in words):
+            continue
+        found.append(d.get("display_name"))
+    return [f for f in found if f][:want], ""
+
+
+def reddit_community(query: str, limit: int = 30, **_) -> Result:
+    """Community-first Reddit: find the subreddits for a topic, then take their top complaints from the last year.
+    Much less noise than searching all of Reddit, because everyone in these places already cares about the topic."""
+    subs, err = find_subreddits(query)
+    if err:
+        return Result([], False, err)
+    out, errs = [], []
+    for sub in subs:
+        res = reddit(PAIN_QUERY, limit=max(10, limit // max(len(subs), 1)), subreddit=sub, sort="top")
+        if not res.ok:
+            errs.append(res.error)
+            continue
+        for p in res.posts:
+            p.meta["community"] = True
+        out += res.posts
+    if errs and not out:
+        return Result([], False, errs[0])
+    return Result(out)
+
+
+# ------------------------------------------------- FDA device adverse events (openFDA, keyless)
+def fda_devices(query: str, limit: int = 20, **_) -> Result:
+    """Real failure reports for medical and assistive devices (wheelchairs, hearing aids, prosthetics, pumps).
+    Free text written by users and clinics. Unvalidated: shows that a failure happens, never how often."""
+    params = {"search": f'device.generic_name:"{query}"', "limit": min(limit, 50)}
+    if os.environ.get("OPENFDA_KEY"):
+        params["api_key"] = os.environ["OPENFDA_KEY"]
+    data, err = _get("https://api.fda.gov/device/event.json", params)
+    if data is None:
+        if err.startswith("HTTPStatusError") and "404" in err:
+            return Result([])  # openFDA answers 404 when nothing matches
+        return Result([], False, err)
+    out = []
+    for r in data.get("results", []):
+        dev = (r.get("device") or [{}])[0]
+        texts = r.get("mdr_text") or []
+        event = next((t.get("text") for t in texts if "Description of Event" in (t.get("text_type_code") or "")), None) \
+            or (texts[0].get("text") if texts else "")
+        event = _plain(event)
+        if not event:
+            continue
+        name = f"{dev.get('generic_name') or query} ({dev.get('brand_name') or 'unknown brand'})"
+        d = r.get("date_received") or ""
+        date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else ""
+        out.append(Post("fda_devices", f"fda-{r.get('mdr_report_key')}", event[:120], f"{name}. {event[:1400]}",
+                        f"https://api.fda.gov/device/event.json?search=mdr_report_key:{r.get('mdr_report_key')}", "",
+                        0, 0, date, {"site": r.get("event_type") or "", "device": name}))
+    return Result(out)
+
+
+# ------------------------------------------------- Europe PMC (papers and preprints, keyless)
+def europepmc(query: str, limit: int = 20, **_) -> Result:
+    params = {"query": query, "format": "json", "resultType": "core", "pageSize": min(limit, 50), "sort": "CITED desc"}
+    data, err = _get("https://www.ebi.ac.uk/europepmc/webservices/rest/search", params)
+    if data is None:
+        return Result([], False, err)
+    out = []
+    for r in (data.get("resultList") or {}).get("result", []):
+        abstract = _plain(r.get("abstractText"))
+        if not abstract:
+            continue
+        url = f"https://europepmc.org/article/{r.get('source')}/{r.get('id')}"
+        out.append(Post("europepmc", f"epmc-{r.get('source')}-{r.get('id')}", _plain(r.get("title")), abstract[:1500], url,
+                        (r.get("authorString") or "")[:80], r.get("citedByCount") or 0, 0, str(r.get("pubYear") or ""),
+                        {"site": "europepmc"}))
     return Result(out)
 
 
@@ -303,7 +408,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "github": github,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -318,5 +423,8 @@ def enabled() -> dict:
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
+        "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
+        "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
+        "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},
         "github": {"enabled": True, "note": "token set" if os.environ.get("GITHUB_TOKEN") else "no token: low rate limit"},
     }

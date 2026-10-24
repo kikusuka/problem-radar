@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
 from .pain import (gap_cues, HACK_WORDS, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_relevant, looks_like_pain, relevance,
@@ -27,7 +28,8 @@ RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 
-STRUCTURED = {"petitions", "nyc311"}  # counts and signatures from official data; pain by nature, no pain-word test
+PAPERS = {"scholar", "europepmc"}
+STRUCTURED = {"petitions", "nyc311", "fda_devices"}  # counts and signatures from official data; pain by nature, no pain-word test
 
 SE_GENERIC = ["superuser", "webapps", "workplace"]
 SE_DEV = ["stackoverflow", "serverfault", "softwareengineering", "devops"]
@@ -38,12 +40,12 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["hn", "se", "reddit"], "se": None},
-    "any": {"sources": ["hn", "se", "reddit"], "se": None},
-    "hardware": {"sources": ["se", "reddit", "hn"],
+    "software": {"sources": ["reddit_community", "hn", "se", "reddit"], "se": None},
+    "any": {"sources": ["reddit_community", "hn", "se", "reddit"], "se": None},
+    "hardware": {"sources": ["reddit_community", "fda_devices", "se", "reddit", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
-    "policy": {"sources": ["petitions", "nyc311", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
-    "research": {"sources": ["scholar", "se", "hn", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
+    "policy": {"sources": ["petitions", "nyc311", "reddit_community", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
+    "research": {"sources": ["scholar", "europepmc", "se", "hn", "reddit_community", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
 }
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
 
@@ -99,7 +101,7 @@ class Job:
 
 
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
-         lens: str = "any", also: list[str] | None = None) -> list[Job]:
+         lens: str = "any", also: list[str] | None = None, region: dict | None = None) -> list[Job]:
     """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
     lens = lens if lens in LENSES else "any"
     cfg = LENSES[lens]
@@ -109,25 +111,38 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     per = 40 if deep else 30
     default = list(cfg["sources"]) + (["github"] if is_dev_niche(niche) and lens in ("software", "any") else [])
     names = [s for s in (sources or default) if s in S.SOURCES]
+    if not sources:  # explicit source choices are honoured; defaults skip official data that does not apply to the region
+        names = [s for s in names if R.applies(s, region)]
     queries = [niche] + [f"{niche} {m}" for m in mods]
     extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # synonyms supplied by the analyst
     jobs: list[Job] = []
     for name in names:
         if name == "se":
             sites = se_sites or (topic_sites(niche) + (cfg["se"] or se_sites_for(niche)))
-            sites = list(dict.fromkeys(sites))[:5]
+            sites = list(dict.fromkeys(sites))[:4]
             for site in sites:
-                for q in queries[: 4 if deep else 3] + extra[:2]:
+                for q in queries[: 3 if deep else 2] + extra[:1]:
                     jobs.append(Job("se", q, {"site": site}, per))
         elif name == "github":
             jobs += [Job("github", q, {}, per) for q in queries[:3] + extra[:1]]
-        elif name == "scholar":
-            jobs += [Job("scholar", q, {}, per) for q in queries[: 5 if deep else 4] + extra[:2]]
+        elif name in PAPERS:
+            jobs += [Job(name, q, {}, per) for q in queries[: 5 if deep else 4] + extra[:2]]
+        elif name == "reddit_community":
+            jobs += [Job("reddit_community", q, {}, per) for q in dict.fromkeys([niche] + extra[:2])]
+        elif name == "fda_devices":  # generic device names: use the niche and the analyst's synonyms ("hearing aid", "wheelchair")
+            jobs += [Job("fda_devices", q, {}, per) for q in dict.fromkeys([niche] + extra[:3])]
         elif name in STRUCTURED:
             jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
         else:  # hn, reddit
             jobs += [Job(name, q, {}, per) for q in queries + extra]
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
+    if region:  # bias toward the place: its own communities, and its name in the query
+        if "reddit" in names:
+            jobs += [Job("reddit", q, {"subreddit": sub}, per) for sub in region["subreddits"][:2] for q in dict.fromkeys([niche] + extra[:1])]
+        if "reddit_community" in names:
+            jobs.append(Job("reddit_community", f"{niche} {region['name']}", {}, per))
+        if "hn" in names:
+            jobs.append(Job("hn", f"{niche} {region['name']}", {}, per))
     return jobs
 
 
@@ -198,9 +213,12 @@ def _compact(p: S.Post, rel: float, text: str) -> dict:
         "relevance": round(rel, 2),
         "signals": signals(text),
     }
-    if p.source in STRUCTURED:
+    if p.source == "fda_devices":
+        out["note"] = "FDA adverse-event report: a real device failure, unvalidated; shows the failure exists, not how common it is"
+        out["device"] = p.meta.get("device", "")
+    elif p.source in STRUCTURED:
         out["note"] = "official data: score is " + ("signature count" if p.source == "petitions" else "complaint count")
-    if p.source == "scholar":
+    if p.source in PAPERS:
         out["note"] = "paper: score is citation count, date is publication year; judge the gap from the abstract"
         for sent in re.split(r"(?<=[.!?])\s+", clean(p.text)):
             if gap_cues(sent):
@@ -305,8 +323,9 @@ WEB_SUGGESTIONS = {
 }
 
 
-def web_suggestions(term: str, lens: str) -> list[str]:
-    return [q.format(t=term) for q in WEB_SUGGESTIONS.get(lens, WEB_SUGGESTIONS["any"])]
+def web_suggestions(term: str, lens: str, region: dict | None = None) -> list[str]:
+    where = f" {region['name']}" if region else ""
+    return [q.format(t=term) + where for q in WEB_SUGGESTIONS.get(lens, WEB_SUGGESTIONS["any"])]
 
 
 def _rel(terms: list[str], text: str) -> float:
@@ -325,14 +344,16 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
     for p in _dedupe(posts):
         text = _body(p)
         rel = _rel(terms, text)
+        if p.meta.get("community"):
+            rel = max(rel, 0.8)  # relevant because of where it was posted
         structured = p.source in STRUCTURED
-        paper = p.source == "scholar"
+        paper = p.source in PAPERS
         if require_pain and paper and gap_cues(text) < 1:
             continue
         if require_pain and not structured and not paper and not looks_like_pain(text):
             continue
         score = heat(text, p.score, p.comments) + 3 * rel + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
-        if not any(is_relevant(t, text) for t in terms):
+        if not p.meta.get("community") and not any(is_relevant(t, text) for t in terms):
             if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):  # near miss: loose stems
                 misses.append((score, p, rel, text))
             continue
@@ -344,14 +365,15 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
 
 def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
              se_sites: list[str] | None = None, force: bool = False, lens: str = "any", goal: str = "general",
-             also: list[str] | None = None) -> dict:
+             also: list[str] | None = None, region: str | None = None) -> dict:
+    reg = R.resolve(region)
     depth = "deep" if depth == "deep" else "quick"
     lens = lens if lens in LENSES else "any"
     goal = goal if goal in GOALS else "general"
     limit = max(5, min(limit, 60))
     also = [t.strip() for t in (also or []) if t and t.strip()][:4]
     cacheable = sources is None and se_sites is None and not also
-    key = f"{slug(niche)}-{depth}-{lens}"
+    key = f"{slug(niche)}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
     if cacheable and not force:
         hit = _load(key)
         if hit:
@@ -361,7 +383,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
             hit["analysis_guide"] = build_guide(lens, goal)
             return hit
 
-    jobs = plan(niche, depth, sources, se_sites, lens, also)
+    jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
     raw, status = run_jobs(jobs)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
@@ -389,7 +411,10 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         ]
         payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
                                        "for the same thing. Judge them, and retry with also=[synonyms].")
-    payload["llm_web_search_suggestions"] = web_suggestions(niche, lens)  # your own search tool covers shops, reviews and news
+    if reg:
+        payload["region"] = {"name": reg["name"], "code": reg["code"]}
+        payload["region_note"] = R.coverage_note(reg, list(status))
+    payload["llm_web_search_suggestions"] = web_suggestions(niche, lens, reg)  # your own search tool covers shops, reviews and news
     if not kept:
         payload["note"] = ("No relevant complaints found. See coverage for failed or skipped sources. "
                            "Try a broader niche, depth='deep', another lens, or search_pain with your own wording.")

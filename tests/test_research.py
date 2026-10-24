@@ -2,6 +2,7 @@ import time
 import asyncio
 
 import pytest
+from radar import regions as R_
 
 from radar import research
 from radar import sources as S
@@ -29,6 +30,10 @@ def fakes(monkeypatch, tmp_path):
     monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(list(HN)))
     monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result(list(SE)))
     monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([], False, "blocked or unauthorized (403)"))
+    monkeypatch.setitem(S.SOURCES, "reddit_community", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "fda_devices", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "europepmc", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S._se_cooldown, "until", 0.0)
 
 
 def test_coverage_reports_every_source_state():
@@ -350,3 +355,114 @@ def test_relevance_matches_word_starts_not_substrings():
     assert relevance("grip aid", "my grip aid broke") == 1.0
     assert relevance("invoices", "the invoice export is broken") == 1.0
     assert relevance("assistive devices", "Home Assistant dashboard") < 1.0
+
+
+# ---------------------------------------------------------------- v4.5: community-first Reddit, SE cooldown
+def test_find_subreddits_keeps_only_topical_nonadult_communities(monkeypatch):
+    kids = [{"data": {"display_name": "HearingAids", "title": "Hearing aids", "public_description": "", "subscribers": 20000}},
+            {"data": {"display_name": "Fortnite", "title": "Games", "public_description": "", "subscribers": 900000}},
+            {"data": {"display_name": "hearingadult", "title": "hearing", "public_description": "", "subscribers": 5000, "over18": True}},
+            {"data": {"display_name": "tinyhearing", "title": "hearing aids", "public_description": "", "subscribers": 20}}]
+    monkeypatch.setattr(S, "_reddit_json", lambda path, params: ({"data": {"children": kids}}, ""))
+    subs, err = S.find_subreddits("hearing aids")
+    assert subs == ["HearingAids"] and not err
+
+
+def test_reddit_community_reads_top_posts_from_found_subreddits(monkeypatch):
+    monkeypatch.setattr(S, "find_subreddits", lambda q, want=3: (["HearingAids"], ""))
+    post = S.Post("reddit", "rd-1", "Batteries die constantly", "so annoying and expensive", "https://r/1", "u", 50, 9, "2026-09-01", {"site": "HearingAids"})
+    seen = {}
+
+    def fake_reddit(query, limit=20, subreddit=None, sort="relevance", **k):
+        seen.update(subreddit=subreddit, sort=sort)
+        return S.Result([post])
+
+    monkeypatch.setattr(S, "reddit", fake_reddit)
+    res = S.reddit_community("hearing aids")
+    assert seen == {"subreddit": "HearingAids", "sort": "top"} and res.posts[0].meta["community"] is True
+
+
+def test_community_posts_stay_relevant_even_without_the_exact_words():
+    p = S.Post("reddit", "rd-2", "Batteries die constantly and it is so annoying", "I hate how expensive these are",
+               "https://r/2", "u", 90, 12, "2026-09-02", {"site": "HearingAids", "community": True})
+    off = S.Post("reddit", "rd-3", "Batteries die constantly and it is so annoying", "I hate how expensive these are",
+                 "https://r/3", "u2", 90, 12, "2026-09-02", {"site": "Fortnite"})
+    ranked, _ = research._rank([p, off], ["hearing aids"])
+    assert [x[1].id for x in ranked] == ["rd-2"]
+
+
+def test_se_stops_hammering_after_a_429(monkeypatch):
+    calls = []
+    monkeypatch.setitem(S._se_cooldown, "until", 0.0)
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (calls.append(1), (None, "rate limited (429)"))[1])
+    first, second = S.se("x", 5, site="diy"), S.se("y", 5, site="diy")
+    assert not first.ok and not second.ok and len(calls) == 1 and "STACKEXCHANGE_KEY" in first.error
+    monkeypatch.setitem(S._se_cooldown, "until", 0.0)
+
+
+def test_fda_devices_turns_adverse_events_into_posts(monkeypatch):
+    payload = {"results": [{"mdr_report_key": "123", "date_received": "20240115", "event_type": "Malfunction",
+                            "device": [{"generic_name": "wheelchair, powered", "brand_name": "ACME"}],
+                            "mdr_text": [{"text_type_code": "Additional Manufacturer Narrative", "text": "Repair done."},
+                                         {"text_type_code": "Description of Event or Problem", "text": "THE CHAIR IS NOW BROKEN AND NO LONGER IN USE."}]},
+                           {"mdr_report_key": "124", "device": [{}], "mdr_text": []}]}
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (payload, ""))
+    res = S.fda_devices("wheelchair", 5)
+    assert res.ok and len(res.posts) == 1  # the report with no text is dropped
+    p = res.posts[0]
+    assert p.title.startswith("THE CHAIR IS NOW BROKEN") and p.created == "2024-01-15" and "ACME" in p.text and p.source == "fda_devices"
+
+
+def test_fda_devices_no_match_is_empty_not_failure(monkeypatch):
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (None, "HTTPStatusError: Client error '404 NOT FOUND'"))
+    res = S.fda_devices("zzzz", 5)
+    assert res.ok and res.posts == []
+
+
+# ---------------------------------------------------------------- v4.7: regions, Europe PMC
+def test_region_resolves_names_codes_and_free_text():
+    from radar import regions as R
+    assert R.resolve("India")["code"] == "IN" and R.resolve("uk")["code"] == "GB" and R.resolve("United Kingdom")["code"] == "GB"
+    assert R.resolve("") is None and R.resolve("worldwide") is None
+    assert R.resolve("Kerala")["name"] == "Kerala" and R.resolve("Kerala")["code"] == ""
+
+
+def test_no_region_stays_worldwide_and_region_adds_local_communities():
+    worldwide = research.plan("elder care", "quick", lens="policy")
+    assert not any(j.opts.get("subreddit") for j in worldwide)
+    india = research.plan("elder care", "quick", lens="policy", region=R_.resolve("India"))
+    assert any(j.source == "reddit" and j.opts.get("subreddit") == "india" for j in india)
+    assert any(j.source == "reddit_community" and "India" in j.query for j in india)
+    assert not any(j.source in ("petitions", "nyc311") for j in india)  # official data is UK and US only
+    uk = research.plan("elder care", "quick", lens="policy", region=R_.resolve("UK"))
+    assert any(j.source == "petitions" for j in uk) and not any(j.source == "nyc311" for j in uk)
+
+
+def test_explicit_sources_override_region_filtering():
+    jobs = research.plan("elder care", "quick", sources=["petitions"], region=R_.resolve("India"))
+    assert any(j.source == "petitions" for j in jobs)
+
+
+def test_region_result_is_honest_about_missing_official_data():
+    out = research.research("elder care", lens="policy", region="India", force=True)
+    assert out["region"]["code"] == "IN" and "no official-data connector for India" in out["region_note"]
+    assert all("India" in q for q in out["llm_web_search_suggestions"])
+    plain = research.research("elder care", lens="policy", force=True)
+    assert "region" not in plain
+
+
+def test_region_changes_the_cache_key(tmp_path):
+    research.research("invoices", force=True)
+    research.research("invoices", region="India", force=True)
+    names = sorted(p.name for p in tmp_path.glob("*.json"))
+    assert len(names) == 2 and any("in" in n for n in names)
+
+
+def test_europepmc_turns_results_into_papers_with_abstracts(monkeypatch):
+    payload = {"resultList": {"result": [
+        {"id": "123", "source": "MED", "title": "Caregiver burden in dementia", "abstractText": "Little is known about home support. Further research is needed.",
+         "pubYear": "2025", "citedByCount": 7, "authorString": "A B"},
+        {"id": "9", "source": "MED", "title": "No abstract here"}]}}
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (payload, ""))
+    res = S.europepmc("dementia caregiver", 5)
+    assert len(res.posts) == 1 and res.posts[0].url == "https://europepmc.org/article/MED/123" and res.posts[0].score == 7

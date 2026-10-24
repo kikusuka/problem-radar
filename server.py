@@ -80,8 +80,13 @@ def explore_domains(interest: str = "") -> dict:
 @mcp.tool()
 def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: str = "quick", limit: int = 25,
                    refresh: bool = False, sources: list[str] | None = None, se_sites: list[str] | None = None,
-                   also: list[str] | None = None) -> dict:
+                   also: list[str] | None = None, region: str = "") -> dict:
     """Research a niche for real, recurring problems.
+
+    region: leave empty for worldwide (the default). If the person mentions a place ("I'm in India", "UK problems"), pass it
+    as a country name or code, e.g. "India", "UK", "Nigeria". That adds the country's own communities and its name to
+    searches, and uses official data where it exists (UK petitions, US NYC 311 and FDA). Other places have community and
+    paper coverage only, and the result says so. You decide; the person can change it any time.
 
     also: synonyms and related terms (e.g. ["wheelchair", "prosthetic", "hearing aid"] for "assistive devices"). People
     rarely use your exact words, so pass these whenever you can, especially if few posts come back.
@@ -95,7 +100,7 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     and follow the analysis_guide. depth: quick (default) or deep. sources: any of hn, se, reddit, github, web, petitions,
     nyc311, scholar. se_sites: Stack Exchange site names, e.g. ["electronics", "diy"]. Cached 36h; refresh=True re-runs.
     """
-    return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also)
+    return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 
 
 @mcp.tool()
@@ -121,9 +126,9 @@ def validate_problem(problem: str, niche: str = "", lens: str = "software") -> d
 
 
 @mcp.tool()
-def hackathon_ideas(theme: str, lens: str = "software", limit: int = 25, depth: str = "quick") -> dict:
-    """Ground a hackathon theme in real complaints. Same as research_niche with goal=hackathon."""
-    return research.research(theme, depth, limit, lens=lens, goal="hackathon")
+def hackathon_ideas(theme: str, lens: str = "software", limit: int = 25, depth: str = "quick", region: str = "") -> dict:
+    """Ground a hackathon theme in real complaints. Same as research_niche with goal=hackathon. region: country, or empty for worldwide."""
+    return research.research(theme, depth, limit, lens=lens, goal="hackathon", region=region)
 
 
 @mcp.tool()

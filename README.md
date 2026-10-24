@@ -35,12 +35,21 @@ Try: *"Use problem-radar. I'm a mechanical engineering student with 6 months for
 | `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, GitHub |
 | `hardware` | devices, products, DIY | Electronics, DIY, 3D printing, robotics Stack Exchange sites |
 | `policy` | rules, services, civic fixes | UK Parliament petitions (signature counts), NYC 311 (complaint counts) |
-| `research` | open problems, thesis topics | OpenAlex papers, academia and science Stack Exchange sites |
+| `research` | open problems, thesis topics | OpenAlex and Europe PMC papers, academia and science Stack Exchange sites |
 | `any` | lets the analyst choose | general sources |
 
 Civic data covers only the UK and New York City today. Everything works without keys; optional keys widen
 coverage (see `.env.example`). Every result includes a `coverage` block per source (`ok`, `partial`, `failed`,
 `skipped`) with the error, so nothing fails silently.
+
+## Worldwide by default, local when asked
+
+Leave `region` empty and the search is worldwide. If the person says "I'm in India" or "UK problems", the chatting
+model passes `region="India"` (any country name or code; the person can change it any time). Then the search adds that
+country's own communities and its name to queries, and runs official data only where it applies (UK petitions for the
+UK, NYC 311 and FDA device reports for the US). For other places the result says there is no official-data connector yet
+and relies on community and paper sources plus web search suggestions that include the country. Nothing is guessed on
+the server.
 
 ## How a good problem is judged
 
@@ -115,7 +124,18 @@ It is the best source for everyday problems, so add free credentials:
 
 Check Reddit's current API terms before publishing a public server that uses it.
 
+## Stack Exchange key (free, recommended)
+
+Without a key, Stack Exchange allows about 300 requests a day per IP, and a public server shares one IP, so it hits
+`429` quickly. A free key (register an app at stackapps.com/apps/oauth/register) raises that to 10,000 a day. Set it
+as `STACKEXCHANGE_KEY`. The server also backs off for two minutes after a 429 instead of retrying.
+
 ## What live testing taught us
+
+Searching all of Reddit for a topic returned mostly viral, off-topic posts. Version 4.5 is community-first: it finds
+the subreddits where the topic lives (for example r/HearingAids, r/dementia) and reads their top complaints of the
+year, so everyone in the results already cares about the topic.
+
 
 Early versions searched "niche + exact phrase" and returned almost nothing for specific topics, counted filler words
 as topic words, and once reported "no solution found" for something that obviously exists. The current design

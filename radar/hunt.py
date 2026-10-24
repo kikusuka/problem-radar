@@ -100,7 +100,7 @@ def plan_hunt(goal: str = "general", interests: list[str] | None = None, skills:
         "seed_niches": seeds,
         "steps": [
             "1. If interests or skills are missing, ask the person two short questions before searching.",
-            f"2. Call research_niche for 3 of the seed niches with lens='{chosen}' and goal='{goal}'.",
+            f"2. Call research_niche for 3 of the seed niches with lens='{chosen}' and goal='{goal}'" + (f", region='{location}'" if location else "") + ".",
             "3. Group and score the findings with the fit_rubric. The 'fit for you' score must use the profile above.",
             "4. Shortlist 3 problems. Call validate_problem on each.",
             "5. Present the top pick, one backup, and what to check with 5 real people before building.",
@@ -139,6 +139,7 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
                     seen.add(n)
                     seeds.append({"niche": n, "domain": d["domain"]})
     seeds = seeds[:8]
+    region_hint = f", region='{location}'" if location else ""
     ethics = ("If your project collects data from people, get permission first (teacher, supervisor or ethics board), keep it anonymous, "
               "and take extra care with minors.")
     return {
@@ -151,7 +152,7 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
         "seed_niches": seeds,
         "steps": [
             "1. If field, time available or interests are missing, ask the student two short questions first.",
-            f"2. Call research_niche for 3 seed niches with lens='{lens}' and goal='{goal if goal in ('hackathon','class_project','capstone','research','science_fair') else 'general'}'."
+            f"2. Call research_niche for 3 seed niches with lens='{lens}'{region_hint} and goal='{goal if goal in ('hackathon','class_project','capstone','research','science_fair') else 'general'}'."
             + (" For a research goal use find_research_gaps." if lens == "research" else ""),
             "3. Score candidates with student_rubric. 'Feasible for you' must use the profile above.",
             "4. For the top 3, call check_if_solved, then validate_problem on the best two.",
