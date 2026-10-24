@@ -153,9 +153,49 @@ def is_dev_niche(niche: str) -> bool:
     return any(w in DEV_HINTS for w in re.findall(r"[a-z]+", niche.lower()))
 
 
+STOP_WORDS = set(
+    "the and for with from into onto over under about that this these those you your our their his her its are was were "
+    "been being have has had can could should would will not but all any how what why when where who which than then also "
+    "one two use used using via per".split()
+)
+GENERIC = {"low", "cost", "people", "person", "better", "easy", "easier", "simple", "new", "good", "best", "help", "helps",
+           "helping", "way", "something", "thing", "limited", "small", "large", "big", "make", "makes", "need", "needs"}
+
+# Single-word modifiers: broad queries ("niche + word") return posts; local pain filtering then picks the real ones.
+# (Exact phrases AND a niche returned almost nothing for specific topics when tested live.)
+MODIFIERS = {
+    "software": ["problem", "manually", "automate", "workaround", "frustrating", "tool", "wish", "slow"],
+    "any": ["problem", "frustrating", "wish", "struggle", "expensive", "difficult", "annoying", "unfair"],
+    "hardware": ["expensive", "diy", "broken", "wish", "alternative", "struggle", "cheap", "hack"],
+    "policy": ["unfair", "dangerous", "complaint", "should", "ignored", "petition", "problem", "cost"],
+    "research": ["understudied", "unclear", "challenge", "limitations", "gap", "unexplored", "lack", "future"],
+}
+
+
+def content_words(text: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in STOP_WORDS]
+
+
+def query_variants(problem: str) -> list[str]:
+    """Shorter keyword queries from a long problem statement (long sentences match almost nothing)."""
+    words, seen = [w for w in content_words(problem) if w not in GENERIC], []
+    for w in words:
+        if w not in seen:
+            seen.append(w)
+
+    def top(n: int) -> str:
+        keep = set(sorted(seen, key=len, reverse=True)[:n])
+        return " ".join(w for w in seen if w in keep)
+
+    out = [top(4)] if seen else []
+    if len(seen) > 2:
+        out.append(top(2))
+    return out or [problem]
+
+
 def relevance(niche: str, text: str) -> float:
-    """Share of niche words found in the text (prefix match so 'invoices' matches 'invoice')."""
-    words = [w for w in re.findall(r"[a-z0-9]+", niche.lower()) if len(w) > 2]
+    """Share of the niche's content words found in the text (prefix match so 'invoices' matches 'invoice')."""
+    words = content_words(niche)
     if not words:
         return 1.0
     low = text.lower()
@@ -163,7 +203,9 @@ def relevance(niche: str, text: str) -> float:
 
 
 def is_relevant(niche: str, text: str) -> bool:
-    words = [w for w in re.findall(r"[a-z0-9]+", niche.lower()) if len(w) > 2]
-    if not words:
+    """Short topics need every word; longer ones need about 60%."""
+    n = len(content_words(niche))
+    if n == 0:
         return True
-    return relevance(niche, text) >= max(1, (len(words) + 1) // 2) / len(words)
+    need = 1.0 if n <= 3 else 0.6
+    return relevance(niche, text) >= need - 1e-9

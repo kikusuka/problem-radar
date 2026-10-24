@@ -19,7 +19,11 @@ not no yes very really about into out up down over under more most some any all 
 there here than too also get got make made use used using like want need one two
 tool tools manually manual tired waste wasting hours hour every week weekly anyone know looking way ways free time work works
 thing things people think wish automate automatically automation help please thanks hey anyone else still maybe actually
-something someone everyone currently different better best good great new old many much even back going gets getting""".split()
+something someone everyone currently different better best good great new old many much even back going gets getting
+study studies data results result methods method conducted review analysis background objective objectives purpose paper papers
+research findings approach proposed show shows shown present presents however although within across among between several
+different various main including related recent current novel significant effect effects based role overall aim aims
+introduction conclusion conclusions participants""".split()
 )
 TOKEN = re.compile(r"[a-z][a-z0-9\-\+#\.]{2,}")
 TAGS = re.compile(r"<[^>]+>")

@@ -11,7 +11,7 @@ from .research import FIT_RUBRIC, build_guide
 
 DOMAINS = [
     {"domain": "health and aging", "niches": ["medication management", "elder care coordination", "caregiver burnout", "hospital discharge", "fall prevention"], "fits": ["software", "hardware", "policy"]},
-    {"domain": "accessibility", "niches": ["screen reader problems", "wheelchair route planning", "hearing aid cost", "captioning", "sensory overload"], "fits": ["software", "hardware", "policy"]},
+    {"domain": "accessibility", "niches": ["hand mobility aids", "hearing aid cost", "wheelchair route planning", "tactile navigation for blind users", "screen reader problems", "captioning", "sensory overload", "communication boards"], "fits": ["software", "hardware", "policy"]},
     {"domain": "education", "niches": ["teacher grading workload", "student mental health", "school lunch", "homework tracking", "classroom tech"], "fits": ["software", "policy"]},
     {"domain": "small business", "niches": ["invoicing", "inventory tracking", "appointment scheduling", "customer follow-up", "bookkeeping"], "fits": ["software"]},
     {"domain": "housing and renting", "niches": ["tenant repairs", "landlord communication", "rent increases", "home energy bills", "mold and damp"], "fits": ["software", "hardware", "policy"]},
@@ -38,7 +38,7 @@ STUDENT_DOMAINS = [
     {"domain": "student: study tools", "niches": ["note taking", "flashcards", "citation management", "group projects", "lecture recordings"], "fits": ["software"]},
     {"domain": "student: money", "niches": ["textbook costs", "student housing", "part-time jobs", "scholarship search", "food costs"], "fits": ["software", "policy"]},
     {"domain": "student: campus sustainability", "niches": ["campus food waste", "energy use in dorms", "recycling", "bike parking", "water use"], "fits": ["software", "hardware", "policy", "research"]},
-    {"domain": "student: accessibility on campus", "niches": ["accessible routes", "captioning lectures", "learning disabilities", "assistive tech cost"], "fits": ["software", "hardware", "policy"]},
+    {"domain": "student: accessibility on campus", "niches": ["accessible routes", "assistive tech cost", "captioning lectures", "learning disabilities", "low-vision tools"], "fits": ["software", "hardware", "policy"]},
     {"domain": "student: research workflow", "niches": ["literature review", "reproducibility", "data cleaning", "lab inventory", "survey tools"], "fits": ["software", "research"]},
     {"domain": "student: access to opportunities", "niches": ["internship search", "scholarship deadlines", "mentor matching", "first-generation students"], "fits": ["software", "policy", "research"]},
 ]
@@ -134,11 +134,11 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
     seeds, seen = [], set()
     for i in interests or [field or ""]:
         for d in explore_domains(i)["domains"][:4]:
-            for n in d["niches"][:2]:
+            for n in d["niches"][:3]:
                 if n not in seen and (lens == "any" or lens in d["fits"]):
                     seen.add(n)
                     seeds.append({"niche": n, "domain": d["domain"]})
-    seeds = seeds[:6]
+    seeds = seeds[:8]
     ethics = ("If your project collects data from people, get permission first (teacher, supervisor or ethics board), keep it anonymous, "
               "and take extra care with minors.")
     return {

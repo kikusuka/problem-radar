@@ -101,6 +101,24 @@ pytest
 
 Tests run offline against fake sources. Live behaviour of each source should be checked after deploying.
 
+## Make Reddit work (recommended)
+
+Reddit blocks anonymous requests from hosting providers, so on a deployed server it shows up as `failed (403)`.
+It is the best source for everyday problems, so add free credentials:
+
+1. Go to reddit.com/prefs/apps, choose "create another app", type **script**, any name, redirect URI `http://localhost`.
+2. Copy the client ID (under the app name) and the secret.
+3. Set `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` as environment variables on your host and redeploy.
+
+Check Reddit's current API terms before publishing a public server that uses it.
+
+## What live testing taught us
+
+Early versions searched "niche + exact phrase" and returned almost nothing for specific topics, counted filler words
+as topic words, and once reported "no solution found" for something that obviously exists. The current design
+searches broadly, judges pain locally, requires every word of a short topic to match, and reports thin evidence as
+**inconclusive** instead of "unsolved". Each of these has a regression test.
+
 ## Limits worth knowing
 
 - Posts show complaints, not proven demand. Talk to 5 real people before you commit.

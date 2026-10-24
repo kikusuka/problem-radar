@@ -19,7 +19,7 @@ from pathlib import Path
 
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
-from .pain import (gap_cues, HACK_WORDS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_relevant, looks_like_pain, relevance,
+from .pain import (gap_cues, HACK_WORDS, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_relevant, looks_like_pain, relevance,
                    signals)
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -54,10 +54,34 @@ def slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "niche"
 
 
+SE_PREFIX = {  # word prefix -> Stack Exchange sites where that topic is actually discussed
+    "assist": ["ux", "hardwarerecs", "diy"], "accessib": ["ux"], "disab": ["ux", "hardwarerecs"], "elder": ["health", "diy"],
+    "health": ["health", "fitness"], "medic": ["health"], "fitness": ["fitness"], "pet": ["pets"], "bike": ["bicycles"],
+    "bicycl": ["bicycles"], "cook": ["cooking"], "food": ["cooking", "sustainability"], "parent": ["parenting"],
+    "child": ["parenting"], "baby": ["parenting"], "home": ["diy"], "house": ["diy"], "repair": ["diy"],
+    "energy": ["sustainability", "diy"], "solar": ["sustainability", "diy"], "recycl": ["sustainability"],
+    "garden": ["gardening"], "farm": ["gardening", "sustainability"], "car": ["mechanics"], "travel": ["travel"],
+    "photo": ["photo"], "music": ["music"], "game": ["gaming"], "teach": ["academia"], "student": ["academia"],
+    "school": ["academia", "workplace"], "universit": ["academia"], "campus": ["academia"], "law": ["law"],
+    "legal": ["law"], "tax": ["money"], "budget": ["money"], "financ": ["money"], "account": ["money"],
+    "bookkeep": ["money"], "invoic": ["money"], "job": ["workplace"], "career": ["workplace"],
+}
+
+
+def topic_sites(niche: str) -> list[str]:
+    out = []
+    for w in re.findall(r"[a-z]+", niche.lower()):
+        for pre, sites in SE_PREFIX.items():
+            if w.startswith(pre):
+                out += [s for s in sites if s not in out]
+    return out
+
+
 def se_sites_for(niche: str) -> list[str]:
     sites = list(SE_DEV if is_dev_niche(niche) else SE_GENERIC)
     for w in re.findall(r"[a-z]+", niche.lower()):
         sites = SE_TOPIC.get(w, []) + sites
+    sites = topic_sites(niche) + sites
     seen, out = set(), []
     for s in sites:
         if s not in seen:
@@ -76,31 +100,37 @@ class Job:
 
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
          lens: str = "any") -> list[Job]:
+    """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
     lens = lens if lens in LENSES else "any"
     cfg = LENSES[lens]
     deep = depth == "deep"
-    phrases = PHRASE_SETS[lens][1 if deep else 0]
-    per = 30 if deep else 20
+    mods = MODIFIERS[lens][: 8 if deep else 4]
+    phrases = PHRASE_SETS[lens][1 if deep else 0][:4] if deep else []  # exact phrases only for deep runs
+    per = 40 if deep else 30
     default = list(cfg["sources"]) + (["github"] if is_dev_niche(niche) and lens in ("software", "any") else [])
     names = [s for s in (sources or default) if s in S.SOURCES]
+    queries = [niche] + [f"{niche} {m}" for m in mods]
     jobs: list[Job] = []
     for name in names:
         if name == "se":
-            for site in (se_sites or cfg["se"] or se_sites_for(niche))[:5]:
-                for ph in phrases[: 4 if deep else 3]:
-                    jobs.append(Job("se", f"{niche} {ph}", {"site": site}, per))
+            sites = se_sites or (topic_sites(niche) + (cfg["se"] or se_sites_for(niche)))
+            sites = list(dict.fromkeys(sites))[:5]
+            for site in sites:
+                for q in queries[: 4 if deep else 3]:
+                    jobs.append(Job("se", q, {"site": site}, per))
         elif name == "github":
-            jobs += [Job("github", f'{niche} "{ph}"', {}, per) for ph in phrases[:4]]
+            jobs += [Job("github", q, {}, per) for q in queries[:3]]
+        elif name == "scholar":
+            jobs += [Job("scholar", q, {}, per) for q in queries[: 5 if deep else 4]]
         elif name == "web":
             if S.enabled()["web"]["enabled"]:
-                jobs += [Job("web", f'{niche} "{ph}"', {}, per) for ph in phrases[:4]]
+                jobs += [Job("web", f'{q} problem OR frustrating OR "wish there was"', {}, 20) for q in queries[:3]]
             else:
                 jobs.append(Job("web", niche, {}, 1))  # one job so the report says it was skipped
-        elif name == "scholar":
-            jobs += [Job("scholar", f'{niche} "{ph}"', {}, per) for ph in phrases[:4]]
         elif name in STRUCTURED:
-            jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself, no phrases
+            jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
         else:  # hn, reddit
+            jobs += [Job(name, q, {}, per) for q in queries]
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
     return jobs
 

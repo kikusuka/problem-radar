@@ -114,11 +114,11 @@ def test_lenses_change_sources_and_phrases():
 def test_structured_civic_data_skips_pain_word_test(monkeypatch):
     pet = S.Post("petitions", "pet-1", "Fund safe pedestrian crossings near schools", "Children cross dangerous roads daily.",
                  "https://petition.parliament.uk/petitions/1", "UK Parliament petition", 12000, 0, "2026-01-01", {"site": "uk-petitions"})
-    c311 = S.Post("nyc311", "311-1", "NYC 311: Street Light Condition / Street Light Out", "5400 complaints filed in the last 12 months about Street Light Condition.",
+    c311 = S.Post("nyc311", "311-1", "NYC 311: Pedestrian Signal Condition / Crossing Signal Out", "5400 complaints filed in the last 12 months about pedestrian crossing signals.",
                   "https://data.cityofnewyork.us/resource/erm2-nwe9", "NYC 311", 5400, 0, "", {"site": "nyc-311"})
     monkeypatch.setitem(S.SOURCES, "petitions", lambda q, limit=20, **k: S.Result([pet]))
     monkeypatch.setitem(S.SOURCES, "nyc311", lambda q, limit=20, **k: S.Result([c311]))
-    out = research.research("pedestrian crossings street light", lens="policy", force=True)
+    out = research.research("pedestrian crossings", lens="policy", force=True)
     sources_seen = {p["source"] for p in out["top_posts"]}
     assert "petitions" in sources_seen and "nyc311" in sources_seen
     assert any("signature count" in p.get("note", "") for p in out["top_posts"])
@@ -196,7 +196,7 @@ def test_check_if_solved_when_nothing_found(monkeypatch):
         monkeypatch.setitem(S.SOURCES, src, lambda q, limit=15, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=15, **k: S.Result([]))
     out = solved.check("zzz unheard-of thing", "software")
-    assert out["assessment"]["hint"] == "no_clear_solution_found" and "not proof" in out["assessment"]["caveat"]
+    assert out["assessment"]["hint"] == "inconclusive_search_too_thin" and "not proof" in out["assessment"]["caveat"]
 
 
 def test_student_hunt_scopes_and_lens():
@@ -217,3 +217,57 @@ def test_server_exposes_v4_tools():
     import server
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert {"student_hunt", "check_if_solved", "find_research_gaps"} <= names
+
+
+# ---------------------------------------------------------------- v4.1: fixes found by live testing
+from radar import pain  # noqa: E402
+
+
+def test_relevance_ignores_stopwords_and_requires_all_words_for_short_topics():
+    assert pain.content_words("assistive technology for hand mobility") == ["assistive", "technology", "hand", "mobility"]
+    off = "Future work on knowledge-defined networking applications for 6G"
+    assert not pain.is_relevant("assistive technology for hand mobility", off)      # 'for' no longer counts
+    assert not pain.is_relevant("assistive devices", "Wifi disconnection issue on some devices")  # missing 'assistive'
+    assert pain.is_relevant("assistive devices", "Audio loops: hearing aids and assistive devices are too expensive")
+
+
+def test_query_variants_shorten_long_problem_statements():
+    v = pain.query_variants("low-cost assistive device for people with limited hand mobility")
+    assert v[0] == "assistive device hand mobility" and len(v[1].split()) == 2
+
+
+def test_plan_is_broad_first_not_exact_phrase_only():
+    jobs = research.plan("assistive devices", "quick", lens="hardware")
+    hn = [j.query for j in jobs if j.source == "hn"]
+    assert "assistive devices" in hn and all('"' not in q for q in hn)          # no exact-phrase AND niche in quick runs
+    deep = research.plan("assistive devices", "deep", lens="hardware")
+    assert any('"' in j.query for j in deep if j.source == "hn")
+
+
+def test_topic_aware_stack_exchange_sites():
+    sites = {j.opts["site"] for j in research.plan("assistive devices", "quick", lens="hardware") if j.source == "se"}
+    assert {"ux", "hardwarerecs"} & sites and "superuser" not in sites
+
+
+def test_hardware_with_no_results_is_inconclusive_not_unsolved(monkeypatch):
+    for src in ("github_repo", "scholar", "hn", "reddit"):
+        monkeypatch.setitem(S.SOURCES, src, lambda q, limit=15, **k: S.Result([]))
+    out = solved.check("low-cost assistive device for limited hand mobility", "hardware")
+    a = out["assessment"]
+    assert a["hint"] == "inconclusive_products_not_covered" and "retail" in a["caveat"]
+    assert out["searched_as"][0] == "assistive device hand mobility"
+
+
+def test_plenty_of_irrelevant_results_means_no_clear_solution(monkeypatch):
+    junk = [S.Post("hn", f"hn-j{i}", f"Unrelated {i}", "nothing about it", f"https://e.com/{i}", "x", 0, 0, "2026-01-01") for i in range(20)]
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(list(junk)))
+    monkeypatch.setitem(S.SOURCES, "github_repo", lambda q, limit=15, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "scholar", lambda q, limit=15, **k: S.Result([]))
+    out = solved.check("quantum widget polisher", "software")
+    assert out["assessment"]["hint"] == "no_clear_solution_found"
+
+
+def test_academic_filler_is_not_a_theme():
+    ps = [P("scholar", i, "A study", "This study presents results of a review of the methods and data conducted in background analysis of exoskeleton gloves", "", 1, 0) for i in range(3)]
+    terms = {t["term"] for t in research.themes(ps, "exoskeleton gloves")}
+    assert not terms & {"study", "results", "methods", "data", "conducted", "review", "analysis", "background"}

@@ -2,7 +2,10 @@
 
 Most "does it exist?" checks only look at software repos. A problem can also be solved by a product on a shelf,
 a paper that already answers the question, or a rule that already exists, so we look at all of them and say what
-each source can and cannot show. The verdict is a hint; the real value is the gap analysis.
+each source can and cannot show. The verdict is a hint, and it is honest about when the search was too thin to say.
+
+Tested live: a long, specific problem sentence matched almost nothing, producing a false "no solution found".
+So we search short keyword variants, and treat thin evidence as "inconclusive", never as "unsolved".
 """
 from __future__ import annotations
 
@@ -10,7 +13,7 @@ import re
 import time
 
 from . import sources as S
-from .pain import relevance
+from .pain import query_variants, relevance
 from .research import Job, _body, _compact, _dedupe, run_jobs
 
 SOLUTION_RE = re.compile(
@@ -24,6 +27,10 @@ GAP_ANGLES = (
     "platform, region, age, disability, offline use, simplicity, privacy, or a specific niche or workflow. Read the best "
     "solution's open issues, reviews and complaints for the gap. Pick one angle and say what you would do differently. "
     "If it is well solved, say so honestly and suggest contributing to the leader, serving an unserved segment, or choosing another problem."
+)
+HARDWARE_CAVEAT = (
+    "Physical products are mostly invisible to these sources (they index code, discussion and papers, not shops). "
+    "Before concluding anything, search retail sites and maker marketplaces yourself, and ask people who have the problem."
 )
 
 
@@ -51,7 +58,9 @@ def _project(p: S.Post) -> dict:
     }
 
 
-def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: str) -> dict:
+def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: str, discussion: list[dict] | None = None,
+           raw_count: int = 0, sources_ok: int = 0) -> dict:
+    discussion = discussion or []
     reasons = []
     strong = [p for p in projects if p["stars"] >= 1000 and not p["archived"] and _recent(p["last_push"], 540)]
     some = [p for p in projects if 50 <= p["stars"] < 1000 and not p["archived"]]
@@ -66,47 +75,55 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
         reasons.append(f"{len(cited)} well-cited recent paper(s) on this topic")
     if won:
         reasons.append(f"{len(won)} public petition(s) with 10,000+ signatures, so it is already on the public agenda")
-    if not reasons:
-        reasons.append("no strong existing project, paper or public action found in these sources")
+
+    found_any = bool(projects or papers or actions or discussion)
+    caveat = ("Absence here is not proof nobody has solved it: these sources skew English and online, and your wording may "
+              "differ from theirs. Try other wording with search_pain, other languages and regions, and ask people.")
+    if lens == "hardware":
+        caveat = HARDWARE_CAVEAT + " " + caveat
 
     if strong or (lens == "research" and len(cited) >= 3):
         hint = "well_served_for_the_general_case"
-    elif some or cited or won or projects or papers or actions:
+    elif found_any:
         hint = "partially_solved"
+        if not reasons:
+            reasons.append("some related projects, papers or discussion exist, but none is clearly strong")
+    elif lens == "hardware":
+        hint = "inconclusive_products_not_covered"
+        reasons.append("nothing found, but physical products are not visible to these sources")
+    elif raw_count < 15 or sources_ok < 2:
+        hint = "inconclusive_search_too_thin"
+        reasons.append(f"only {raw_count} raw results from {sources_ok} working source(s); too little to conclude anything")
     else:
         hint = "no_clear_solution_found"
-    return {
-        "hint": hint,
-        "reasons": reasons,
-        "is_a_hint_only": True,
-        "caveat": ("Absence here is not proof nobody has solved it: these sources skew English and online, and your wording may "
-                   "differ from theirs. Try other wording with search_pain, other languages and regions, and ask people."),
-    }
+        reasons.append("searched several sources with short keyword variants and found no clearly relevant solution")
+    return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "caveat": caveat}
 
 
 def check(problem: str, lens: str = "software") -> dict:
     lens = lens if lens in ("software", "hardware", "policy", "research", "any") else "software"
-    jobs = [Job("hn", f"Show HN {problem}", {}, 15), Job("hn", f"{problem} alternative", {}, 15)]
-    if lens in ("software", "any"):
-        jobs.append(Job("github_repo", problem, {}, 15))
-    if lens in ("software", "research", "any"):
-        jobs.append(Job("scholar", problem, {}, 15))
-    if lens == "hardware":
-        jobs += [Job("github_repo", f"{problem} hardware", {}, 10), Job("reddit", f'{problem} "I bought"', {}, 15),
-                 Job("reddit", f"{problem} diy", {}, 15)]
-    if lens == "policy":
-        jobs += [Job("petitions", problem, {}, 15), Job("reddit", f"{problem} law OR policy OR campaign", {}, 15)]
-    if lens == "research":
-        jobs.append(Job("scholar", f"{problem} review OR survey", {}, 15))
+    variants = query_variants(problem)
+    jobs: list[Job] = []
+    for v in variants:
+        jobs += [Job("hn", f"Show HN {v}", {}, 20), Job("hn", f"{v} alternative", {}, 20)]
+        if lens in ("software", "any", "hardware"):
+            jobs.append(Job("github_repo", v if lens != "hardware" else f"{v} open source", {}, 15))
+        if lens in ("software", "research", "any", "hardware"):
+            jobs.append(Job("scholar", v, {}, 15))
+        if lens == "hardware":
+            jobs += [Job("reddit", f"{v} diy", {}, 15), Job("reddit", f"{v} I bought", {}, 15)]
+        if lens == "policy":
+            jobs += [Job("petitions", v, {}, 15), Job("reddit", f"{v} law OR policy OR campaign", {}, 15)]
     if S.enabled()["web"]["enabled"]:
-        jobs += [Job("web", f"{problem} app OR tool OR product", {}, 10), Job("web", f"best {problem} alternatives", {}, 10)]
+        jobs += [Job("web", f"{variants[0]} app OR tool OR product", {}, 10), Job("web", f"best {variants[0]} alternatives", {}, 10)]
     raw, status = run_jobs(jobs)
 
+    key = variants[0]
     projects, discussion, papers, actions = [], [], [], []
     for p in _dedupe(raw):
         text = _body(p)
-        rel = relevance(problem, text)
-        if rel < 0.3:
+        rel = relevance(key, text)
+        if rel < 0.5:
             continue
         if p.source == "github_repo":
             projects.append(_project(p))
@@ -120,11 +137,13 @@ def check(problem: str, lens: str = "software") -> dict:
     papers.sort(key=lambda x: x["score"], reverse=True)
     actions.sort(key=lambda x: x["score"], reverse=True)
     discussion.sort(key=lambda x: x["score"], reverse=True)
+    sources_ok = sum(1 for s in status.values() if s["state"] in ("ok", "partial"))
     return {
         "problem": problem,
         "lens": lens,
+        "searched_as": variants,
         "coverage": status,
-        "assessment": assess(projects, papers, actions, lens),
+        "assessment": assess(projects, papers, actions, lens, discussion, len(raw), sources_ok),
         "existing_projects": projects[:8],
         "products_and_discussion": discussion[:8],
         "papers": papers[:6],
