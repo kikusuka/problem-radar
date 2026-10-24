@@ -14,8 +14,7 @@ The LLM you chat with does the thinking and writing. This server only fetches, c
 | `find_problems(niche, limit, refresh, sources)` | Ranked problem cards for a niche |
 | `get_problem(problem_id)` | Full evidence for one card |
 | `hackathon_ideas(theme, limit)` | Problem statements fitted to a hackathon theme |
-| `save_problem(problem_id, note)` | Save to your backlog |
-| `list_backlog()` | Your saved problems, best first |
+| `save_problem` / `list_backlog` | Local-only backlog. Off by default; set `ENABLE_BACKLOG=1` to turn on |
 
 Evidence rule: a card only appears if it has 3+ posts from 2+ independent authors.
 

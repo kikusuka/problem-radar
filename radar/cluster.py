@@ -16,7 +16,10 @@ STOP = set(
     """a an the and or but if then so of to in on for with at by from as is are was were be been being it its this that
 these those i you he she we they me my your our their do does did done have has had can could should would will just
 not no yes very really about into out up down over under more most some any all how what why when where who which
-there here than too also get got make made use used using like want need one two""".split()
+there here than too also get got make made use used using like want need one two
+tool tools manually manual tired waste wasting hours hour every week weekly anyone know looking way ways free time work works
+thing things people think wish automate automatically automation help please thanks hey anyone else still maybe actually
+something someone everyone currently different better best good great new old many much even back going gets getting""".split()
 )
 TOKEN = re.compile(r"[a-z][a-z0-9\-\+#\.]{2,}")
 TAGS = re.compile(r"<[^>]+>")
@@ -37,7 +40,10 @@ def jaccard(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
-def cluster_posts(posts: list[dict], niche: str, threshold: float = 0.18) -> list[list[dict]]:
+MIN_SHARED = 3
+
+
+def cluster_posts(posts: list[dict], niche: str, threshold: float = 0.3) -> list[list[dict]]:
     """Greedy clustering. posts are dicts (see sources.Post)."""
     niche_tokens = keywords(niche)
     items = []
@@ -52,18 +58,24 @@ def cluster_posts(posts: list[dict], niche: str, threshold: float = 0.18) -> lis
             continue
         items.append((p, kw))
 
-    clusters: list[dict] = []  # {"kw": set, "posts": [..]}
+    # Single-link: a post joins the cluster holding its most similar member,
+    # if they share enough specific terms. (A growing union made the old version far too strict.)
+    clusters: list[dict] = []  # {"members": [(post, kw)], "posts": [..]}
     for p, kw in items:
         best, best_sim = None, 0.0
         for c in clusters:
-            sim = jaccard(kw, c["kw"])
-            if sim > best_sim:
-                best, best_sim = c, sim
+            for _, mkw in c["members"]:
+                shared = len(kw & mkw)
+                if shared < MIN_SHARED:
+                    continue
+                sim = shared / min(len(kw), len(mkw))
+                if sim > best_sim:
+                    best, best_sim = c, sim
         if best is not None and best_sim >= threshold:
+            best["members"].append((p, kw))
             best["posts"].append(p)
-            best["kw"] |= kw
         else:
-            clusters.append({"kw": set(kw), "posts": [p]})
+            clusters.append({"members": [(p, kw)], "posts": [p]})
     return [c["posts"] for c in clusters]
 
 

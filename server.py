@@ -51,7 +51,8 @@ def find_problems(niche: str, limit: int = 8, refresh: bool = False, sources: li
         "returned": len(cards),
         "cards": [_trim(c) for c in cards],
         "instructions_for_llm": WRITE_UP,
-        "note": "" if cards else "No verified clusters. Try a broader niche or refresh=True.",
+        "note": "" if cards else "No verified clusters. Weak signals below are single posts, not confirmed problems.",
+        "weak_signals": [] if cards else data.get("weak_signals", []),
     }
 
 
@@ -81,21 +82,25 @@ def hackathon_ideas(theme: str, limit: int = 10) -> dict:
     }
 
 
-@mcp.tool()
-def save_problem(problem_id: str, note: str = "") -> dict:
-    """Save a problem to the backlog so you can come back to it. Optional note."""
-    card = store.find_card(problem_id)
-    if not card:
-        return {"error": f"No problem with id {problem_id}."}
-    items = store.save_to_backlog(card, note)
-    return {"saved": problem_id, "backlog_size": len(items)}
+if os.environ.get("ENABLE_BACKLOG") == "1":  # local use only; the backlog file is shared on a hosted server
+
+    @mcp.tool()
+    def save_problem(problem_id: str, note: str = "") -> dict:
+        """Save a problem to the backlog so you can come back to it. Optional note."""
+        card = store.find_card(problem_id)
+        if not card:
+            return {"error": f"No problem with id {problem_id}."}
+        items = store.save_to_backlog(card, note)
+        return {"saved": problem_id, "backlog_size": len(items)}
 
 
-@mcp.tool()
-def list_backlog() -> dict:
-    """List saved problems, best score first."""
-    items = sorted(store.read_backlog(), key=lambda c: c["scores"]["overall"], reverse=True)
-    return {"count": len(items), "items": [{**_trim(i), "niche": i["niche"], "note": i.get("note", "")} for i in items]}
+    @mcp.tool()
+    def list_backlog() -> dict:
+        """List saved problems, best score first."""
+        items = sorted(store.read_backlog(), key=lambda c: c["scores"]["overall"], reverse=True)
+        return {"count": len(items), "items": [{**_trim(i), "niche": i["niche"], "note": i.get("note", "")} for i in items]}
+
+
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .cluster import build_cards
+from .cluster import build_cards, clean
+from .pain import signals
 from .pain import build_queries, looks_like_pain
 from .sources import SOURCES, post_to_dict
 
@@ -41,14 +42,24 @@ def mine(niche: str, sources: list[str] | None = None, per_query: int = 25) -> l
 
 def refresh(niche: str, sources: list[str] | None = None) -> dict:
     posts = mine(niche, sources)
+    def heat(p):
+        s = signals(clean(f"{p['title']} {p['text']}"))
+        return s["pain"] + s["hack"] + 2 * s["money"] + p["score"] * 0.1 + p["comments"] * 0.2
+
+    top = sorted(posts, key=heat, reverse=True)[:8]
     payload = {
         "niche": niche,
         "generated_at": int(time.time()),
         "posts_scanned": len(posts),
         "cards": build_cards(posts, niche),
+        "weak_signals": [
+            {"url": p["url"], "source": p["source"], "title": p["title"], "snippet": clean(p["text"] or p["title"])[:240]}
+            for p in top
+        ],
     }
-    CARDS_DIR.mkdir(parents=True, exist_ok=True)
-    (CARDS_DIR / f"{slug(niche)}.json").write_text(json.dumps(payload, indent=2))
+    if payload["cards"]:
+        CARDS_DIR.mkdir(parents=True, exist_ok=True)
+        (CARDS_DIR / f"{slug(niche)}.json").write_text(json.dumps(payload, indent=2))
     return payload
 
 
