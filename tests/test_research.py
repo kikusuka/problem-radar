@@ -379,7 +379,7 @@ def test_reddit_community_reads_top_posts_from_found_subreddits(monkeypatch):
 
     monkeypatch.setattr(S, "reddit", fake_reddit)
     res = S.reddit_community("hearing aids")
-    assert seen == {"subreddit": "HearingAids", "sort": "top"} and res.posts[0].meta["community"] is True
+    assert seen == {"subreddit": "HearingAids", "sort": "top"} and res.posts[0].meta["community"] == "tight"
 
 
 def test_community_posts_stay_relevant_even_without_the_exact_words():
@@ -410,7 +410,7 @@ def test_fda_devices_turns_adverse_events_into_posts(monkeypatch):
     res = S.fda_devices("wheelchair", 5)
     assert res.ok and len(res.posts) == 1  # the report with no text is dropped
     p = res.posts[0]
-    assert p.title.startswith("THE CHAIR IS NOW BROKEN") and p.created == "2024-01-15" and "ACME" in p.text and p.source == "fda_devices"
+    assert p.title.startswith("The chair is now broken") and p.created == "2024-01-15" and "ACME" in p.text and p.source == "fda_devices"
 
 
 def test_fda_devices_no_match_is_empty_not_failure(monkeypatch):
@@ -432,7 +432,7 @@ def test_no_region_stays_worldwide_and_region_adds_local_communities():
     assert not any(j.opts.get("subreddit") for j in worldwide)
     india = research.plan("elder care", "quick", lens="policy", region=R_.resolve("India"))
     assert any(j.source == "reddit" and j.opts.get("subreddit") == "india" for j in india)
-    assert any(j.source == "reddit_community" and "India" in j.query for j in india)
+    assert not any(j.source == "reddit_community" and "India" in j.query for j in india)  # the region must not widen community discovery
     assert not any(j.source in ("petitions", "nyc311") for j in india)  # official data is UK and US only
     uk = research.plan("elder care", "quick", lens="policy", region=R_.resolve("UK"))
     assert any(j.source == "petitions" for j in uk) and not any(j.source == "nyc311" for j in uk)
@@ -466,3 +466,29 @@ def test_europepmc_turns_results_into_papers_with_abstracts(monkeypatch):
     monkeypatch.setattr(S, "_get", lambda *a, **k: (payload, ""))
     res = S.europepmc("dementia caregiver", 5)
     assert len(res.posts) == 1 and res.posts[0].url == "https://europepmc.org/article/MED/123" and res.posts[0].score == 7
+
+
+def test_loose_community_posts_must_mention_the_topic_but_tight_ones_need_not():
+    def post(i, comm, text):
+        return S.Post("reddit", f"rd-{i}", text, "this is so annoying and expensive, I hate it", f"https://r/{i}", f"u{i}", 5, 1, "2026-09-01",
+                      {"site": "x", "community": comm})
+    tight = post(1, "tight", "My airline broke it")
+    loose_off = post(2, "loose", "Totally unrelated candle holder story")
+    loose_on = post(3, "loose", "Hearing is exhausting")
+    ranked, _ = research._rank([tight, loose_off, loose_on], ["hearing aids"])
+    assert sorted(x[1].id for x in ranked) == ["rd-1", "rd-3"]
+
+
+def test_no_single_source_fills_the_list():
+    posts = [S.Post("fda_devices", f"f{i}", f"Chair broke number {i} wheelchair failure", "wheelchair broke", f"https://f/{i}", "", 0, 0, "2024-01-01") for i in range(12)]
+    posts += [S.Post("reddit", f"r{i}", f"Wheelchair user frustrated {i}", "my wheelchair is broken and I hate it", f"https://r/{i}", f"u{i}", 5, 1, "2026-01-01", {"site": "wheelchairs"}) for i in range(3)]
+    ranked, _ = research._rank(posts, ["wheelchair"])
+    ordered = research._diversify(ranked, 10)
+    head = ordered[:7]  # the capped list; the overflow only pads the end when too few other posts exist
+    assert sum(1 for x in head if x[1].source == "fda_devices") == 4 and sum(1 for x in head if x[1].source == "reddit") == 3
+    assert len(ordered) == 15
+
+
+def test_fda_text_is_made_readable():
+    assert S._readable("THE CHAIR IS BROKEN. HE FELL") == "The chair is broken. He fell"
+    assert S._readable("Already readable text") == "Already readable text"

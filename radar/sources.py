@@ -202,7 +202,7 @@ def find_subreddits(query: str, want: int = 3) -> tuple[list[str], str]:
         d = c.get("data", {})
         if d.get("over18") or (d.get("subscribers") or 0) < 300:
             continue
-        label = " ".join([d.get("display_name") or "", d.get("title") or "", d.get("public_description") or ""])
+        label = " ".join([d.get("display_name") or "", d.get("title") or ""])  # name and title only: descriptions match too loosely
         if words and not any(_has_word(w, label) for w in words):
             continue
         found.append(d.get("display_name"))
@@ -221,8 +221,10 @@ def reddit_community(query: str, limit: int = 30, **_) -> Result:
         if not res.ok:
             errs.append(res.error)
             continue
+        from .pain import _has_word, content_words
+        tight = any(_has_word(w, sub) for w in content_words(query))  # the community's own name is about the topic
         for p in res.posts:
-            p.meta["community"] = True
+            p.meta["community"] = "tight" if tight else "loose"
         out += res.posts
     if errs and not out:
         return Result([], False, errs[0])
@@ -230,6 +232,14 @@ def reddit_community(query: str, limit: int = 30, **_) -> Result:
 
 
 # ------------------------------------------------- FDA device adverse events (openFDA, keyless)
+def _readable(text: str) -> str:
+    """FDA reports are mostly ALL CAPS. Make them readable: sentence case when the text is shouting."""
+    letters = [c for c in text if c.isalpha()]
+    if letters and sum(c.isupper() for c in letters) / len(letters) > 0.8:
+        text = ". ".join(part.strip().capitalize() for part in text.lower().split(". "))
+    return text
+
+
 def fda_devices(query: str, limit: int = 20, **_) -> Result:
     """Real failure reports for medical and assistive devices (wheelchairs, hearing aids, prosthetics, pumps).
     Free text written by users and clinics. Unvalidated: shows that a failure happens, never how often."""
@@ -247,10 +257,10 @@ def fda_devices(query: str, limit: int = 20, **_) -> Result:
         texts = r.get("mdr_text") or []
         event = next((t.get("text") for t in texts if "Description of Event" in (t.get("text_type_code") or "")), None) \
             or (texts[0].get("text") if texts else "")
-        event = _plain(event)
+        event = _readable(_plain(event))
         if not event:
             continue
-        name = f"{dev.get('generic_name') or query} ({dev.get('brand_name') or 'unknown brand'})"
+        name = _readable(f"{dev.get('generic_name') or query} ({dev.get('brand_name') or 'unknown brand'})")
         d = r.get("date_received") or ""
         date = f"{d[:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else ""
         out.append(Post("fda_devices", f"fda-{r.get('mdr_report_key')}", event[:120], f"{name}. {event[:1400]}",

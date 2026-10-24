@@ -139,8 +139,6 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     if region:  # bias toward the place: its own communities, and its name in the query
         if "reddit" in names:
             jobs += [Job("reddit", q, {"subreddit": sub}, per) for sub in region["subreddits"][:2] for q in dict.fromkeys([niche] + extra[:1])]
-        if "reddit_community" in names:
-            jobs.append(Job("reddit_community", f"{niche} {region['name']}", {}, per))
         if "hn" in names:
             jobs.append(Job("hn", f"{niche} {region['name']}", {}, per))
     return jobs
@@ -344,16 +342,20 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
     for p in _dedupe(posts):
         text = _body(p)
         rel = _rel(terms, text)
-        if p.meta.get("community"):
-            rel = max(rel, 0.8)  # relevant because of where it was posted
+        community = p.meta.get("community")
+        if community == "loose" and not any(relevance(t, text, loose=True) > 0 for t in terms):
+            community = False  # a loosely related community: the post itself must mention the topic
+        if community:
+            rel = max(rel, 0.8 if community is True or community == "tight" else 0.6)  # relevant because of where it was posted
         structured = p.source in STRUCTURED
         paper = p.source in PAPERS
         if require_pain and paper and gap_cues(text) < 1:
             continue
         if require_pain and not structured and not paper and not looks_like_pain(text):
             continue
-        score = heat(text, p.score, p.comments) + 3 * rel + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
-        if not p.meta.get("community") and not any(is_relevant(t, text) for t in terms):
+        title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0  # topic in the title beats a body mention
+        score = heat(text, p.score, p.comments) + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
+        if not community and not any(is_relevant(t, text) for t in terms):
             if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):  # near miss: loose stems
                 misses.append((score, p, rel, text))
             continue
@@ -361,6 +363,20 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
     ranked.sort(key=lambda x: x[0], reverse=True)
     misses.sort(key=lambda x: x[0], reverse=True)
     return ranked, misses
+
+
+def _diversify(ranked: list, limit: int) -> list:
+    """No single source fills more than about 40% of the list, so one noisy or bulky source cannot bury the rest."""
+    cap = max(3, -(-limit * 2 // 5))
+    counts, first, rest = {}, [], []
+    for item in ranked:
+        src = item[1].source
+        if counts.get(src, 0) < cap:
+            counts[src] = counts.get(src, 0) + 1
+            first.append(item)
+        else:
+            rest.append(item)
+    return first + rest
 
 
 def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
@@ -387,6 +403,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     raw, status = run_jobs(jobs)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
+    ranked = _diversify(ranked, limit)
     payload = {
         "niche": niche,
         "lens": lens,

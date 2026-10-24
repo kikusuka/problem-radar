@@ -139,7 +139,7 @@ def looks_like_pain(text: str) -> bool:
 
 def heat(text: str, score: int, comments: int) -> float:
     s = signals(text)
-    return s["pain"] + s["hack"] + s["intent"] + 2 * s["money"] + math.log1p(max(score, 0)) + 0.5 * math.log1p(max(comments, 0))
+    return s["pain"] + s["hack"] + s["intent"] + 2 * min(s["money"], 4) + math.log1p(max(score, 0)) + 0.5 * math.log1p(max(comments, 0))
 
 
 DEV_HINTS = {
