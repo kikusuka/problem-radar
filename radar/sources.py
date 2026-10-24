@@ -287,6 +287,48 @@ def europepmc(query: str, limit: int = 20, **_) -> Result:
     return Result(out)
 
 
+# ------------------------------------------------- DuckDuckGo (best-effort fallback, no key)
+_ddg_cooldown = {"until": 0.0}
+DDG_ENTRY = re.compile(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>', re.S)
+
+
+def _ddg_url(href: str) -> str:
+    """DuckDuckGo wraps links as //duckduckgo.com/l/?uddg=<encoded url>. Unwrap them."""
+    from urllib.parse import parse_qs, unquote, urlparse
+    href = html.unescape(href)
+    if "uddg=" in href:
+        q = parse_qs(urlparse(href if "//" in href else "//" + href).query)
+        if q.get("uddg"):
+            return unquote(q["uddg"][0])
+    return ("https:" + href) if href.startswith("//") else href
+
+
+def ddg(query: str, limit: int = 10, **_) -> Result:
+    """DuckDuckGo HTML results. NO official API exists: this reads a public page, which DuckDuckGo may block or disallow,
+    especially from a shared server IP. It is a last-resort fallback: it backs off for 10 minutes when blocked and
+    never raises. Results are web pages (not complaints), so treat them as leads to verify."""
+    if os.environ.get("DISABLE_DDG") == "1":
+        return Result([], True, "disabled (DISABLE_DDG=1)", skipped=True)
+    if time.time() < _ddg_cooldown["until"]:
+        return Result([], False, "blocked or rate limited; cooling down")
+    try:
+        r = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, timeout=TIMEOUT,
+                       headers={"User-Agent": "Mozilla/5.0 (compatible; problem-radar/0.2)"})
+    except Exception as e:
+        return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
+    if r.status_code in (202, 403, 429) or "anomaly" in r.text[:3000].lower():
+        _ddg_cooldown["until"] = time.time() + 600
+        return Result([], False, f"blocked or rate limited ({r.status_code})")
+    if r.status_code != 200:
+        return Result([], False, f"HTTP {r.status_code}")
+    out = []
+    for href, title, snippet in DDG_ENTRY.findall(r.text)[:limit]:
+        url = _ddg_url(href)
+        domain = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+        out.append(Post("ddg", f"ddg-{url}", re.sub(r"\s+", " ", _plain(title)), re.sub(r"\s+", " ", _plain(snippet)), url, domain, 0, 0, "", {"site": domain}))
+    return Result(out)
+
+
 # --------------------------------------------------------------------- GitHub
 def github(query: str, limit: int = 20, **_) -> Result:
     headers = {"Accept": "application/vnd.github+json"}
@@ -418,7 +460,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "github": github,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "ddg": ddg, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -433,6 +475,7 @@ def enabled() -> dict:
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
+        "ddg": {"enabled": os.environ.get("DISABLE_DDG") != "1", "note": "DuckDuckGo page fallback, best effort and used only when results are thin; may be blocked from a shared IP"},
         "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},

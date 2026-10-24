@@ -33,6 +33,7 @@ def fakes(monkeypatch, tmp_path):
     monkeypatch.setitem(S.SOURCES, "reddit_community", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "fda_devices", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "europepmc", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "ddg", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S._se_cooldown, "until", 0.0)
 
 
@@ -492,3 +493,57 @@ def test_no_single_source_fills_the_list():
 def test_fda_text_is_made_readable():
     assert S._readable("THE CHAIR IS BROKEN. HE FELL") == "The chair is broken. He fell"
     assert S._readable("Already readable text") == "Already readable text"
+
+
+def test_multiword_topics_must_appear_close_together():
+    from radar.pain import relevance, is_relevant
+    scattered = "Moved back home, renting from my parents at age 34. My old apartment was cramped, and the dog is old too."
+    assert not is_relevant("old age home", scattered)
+    assert is_relevant("old age home", "My grandmother moved into an old age home last year and hates it")
+    assert relevance("elder care", "She provides care for her elderly parents") == 1.0
+    assert relevance("elder care", "Care is hard. " + "word " * 30 + "my elder brother") < 1.0
+
+
+SAMPLE_DDG = (
+    '<div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fcare%3Fa%3D1&amp;rut=abc">Elder care in <b>India</b> is broken</a>'
+    '<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">Families struggle to find <b>elder care</b> services.</a></div>'
+)
+
+
+class _Resp:
+    def __init__(self, status=200, text=SAMPLE_DDG):
+        self.status_code, self.text = status, text
+
+
+def test_ddg_parses_results_and_unwraps_links(monkeypatch):
+    monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
+    monkeypatch.delenv("DISABLE_DDG", raising=False)
+    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: _Resp())
+    res = S.ddg("elder care india", 5)
+    assert res.ok and res.posts[0].url == "https://example.org/care?a=1" and res.posts[0].title == "Elder care in India is broken"
+    assert "struggle" in res.posts[0].text
+
+
+def test_ddg_backs_off_when_blocked_and_can_be_disabled(monkeypatch):
+    monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
+    monkeypatch.delenv("DISABLE_DDG", raising=False)
+    calls = []
+    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: (calls.append(1), _Resp(202, ""))[1])
+    first, second = S.ddg("x"), S.ddg("y")
+    assert not first.ok and not second.ok and len(calls) == 1
+    monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
+    monkeypatch.setenv("DISABLE_DDG", "1")
+    assert S.ddg("z").skipped
+
+
+def test_ddg_is_used_only_when_results_are_thin(monkeypatch):
+    web = S.Post("ddg", "ddg-1", "Elder care problems for families", "Families struggle with elder care costs", "https://example.org/1", "", 0, 0, "", {"site": "example.org"})
+    monkeypatch.setitem(S.SOURCES, "ddg", lambda q, limit=20, **k: S.Result([web]))
+    thin = research.research("elder care", force=True)
+    assert thin["fallback_note"] and any(p["source"].startswith("ddg") for p in thin["top_posts"]) and thin["coverage"]["ddg"]["state"] == "ok"
+    many = [S.Post("hn", f"hn-r{i}", f"Elder care problem number {i}", f"frustrating: elder care costs thousands and is unaffordable, I wish there was a better way, case {i}", f"https://hn/{i}", f"u{i}", 5, 1, "2026-01-01") for i in range(12)]
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(many))
+    rich = research.research("elder care", force=True)
+    assert rich["posts_relevant"] >= 8 and "ddg" not in rich["coverage"] and "fallback_note" not in rich
+    explicit = research.research("elder care", sources=["hn"], force=True)
+    assert "ddg" not in explicit["coverage"]

@@ -29,6 +29,7 @@ CACHE_TTL = 36 * 3600
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 
 PAPERS = {"scholar", "europepmc"}
+WEB = {"ddg"}  # web pages: no pain-word test (a snippet is short), no bonus, lowest trust
 STRUCTURED = {"petitions", "nyc311", "fda_devices"}  # counts and signatures from official data; pain by nature, no pain-word test
 
 SE_GENERIC = ["superuser", "webapps", "workplace"]
@@ -351,7 +352,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         paper = p.source in PAPERS
         if require_pain and paper and gap_cues(text) < 1:
             continue
-        if require_pain and not structured and not paper and not looks_like_pain(text):
+        if require_pain and not structured and not paper and p.source not in WEB and not looks_like_pain(text):
             continue
         title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0  # topic in the title beats a body mention
         score = heat(text, p.score, p.comments) + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
@@ -403,6 +404,18 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     raw, status = run_jobs(jobs)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
+    fallback_note = ""
+    if sources is None and len(kept) < 8 and S.enabled()["ddg"]["enabled"]:
+        # thin results: try DuckDuckGo as a last resort, then re-rank everything together
+        where = f" {reg['name']}" if reg else ""
+        qs = [f"{t} problems complaints{where}" for t in ([niche] + also)[:2]] + [f"{niche} struggle OR frustrating OR unmet need{where}"]
+        web_raw, web_status = run_jobs([Job("ddg", q, {}, 8) for q in qs])
+        status.update(web_status)
+        if web_raw:
+            raw = raw + web_raw
+            ranked, misses = _rank(raw, [niche] + also)
+            kept = [p for _, p, _, _ in ranked]
+            fallback_note = "Results were thin, so DuckDuckGo web pages were added (source 'ddg'). They are leads to verify, not complaints."
     ranked = _diversify(ranked, limit)
     payload = {
         "niche": niche,
@@ -428,6 +441,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         ]
         payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
                                        "for the same thing. Judge them, and retry with also=[synonyms].")
+    if fallback_note:
+        payload["fallback_note"] = fallback_note
     if reg:
         payload["region"] = {"name": reg["name"], "code": reg["code"]}
         payload["region_note"] = R.coverage_note(reg, list(status))

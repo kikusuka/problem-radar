@@ -203,12 +203,32 @@ def _has_word(word: str, text: str, loose: bool = False) -> bool:
     return re.search(r"\b" + re.escape(stem), text, re.I) is not None
 
 
+def _near(words: list[str], text: str, window: int = 8) -> bool:
+    """True when the words appear close together, like a phrase. 'old age home' must not match 'moved back home ... age 34 ... old'."""
+    tokens = re.findall(r"[a-z0-9']+", text.lower())
+
+    def positions(w: str) -> list[int]:
+        w = w.lower()
+        if len(w) < 5:
+            return [i for i, t in enumerate(tokens) if t == w or t == w + "s"]
+        stem = w[:min(7, max(5, len(w) - 2))]
+        return [i for i, t in enumerate(tokens) if t.startswith(stem)]
+
+    pos = [positions(w) for w in words]
+    if any(not ps for ps in pos):
+        return False
+    return any(all(any(abs(q - a) <= window for q in ps) for ps in pos[1:]) for a in pos[0])
+
+
 def relevance(niche: str, text: str, loose: bool = False) -> float:
     """Share of the niche's content words found in the text (prefix match so 'invoices' matches 'invoice')."""
     words = content_words(niche)
     if not words:
         return 1.0
-    return sum(1 for w in words if _has_word(w, text, loose)) / len(words)
+    frac = sum(1 for w in words if _has_word(w, text, loose)) / len(words)
+    if not loose and frac >= 1.0 and 2 <= len(words) <= 3 and not _near(words, text):
+        return 0.5  # every word is present but scattered across the text, so it is not about this topic
+    return frac
 
 
 def is_relevant(niche: str, text: str) -> bool:
