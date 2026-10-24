@@ -1,11 +1,16 @@
-# One niche per line. The daily job mines each of these. Add your own.
-accounting
-shopify store
-property management
-freelance developers
-small business bookkeeping
-healthcare operations
-devops
-excel spreadsheets
-real estate agents
-e-commerce sellers
+# Daily job researches each line. Format: niche  or  niche | lens   (lens: software, hardware, policy, any)
+accounting invoices | software
+shopify store | software
+property management | software
+freelance developers | software
+devops | software
+medication management | any
+elder care | any
+pet feeder | hardware
+home energy use | hardware
+street lighting | policy
+pedestrian crossings | policy
+rent increases | policy
+campus food waste | research
+exam stress | any
+study group scheduling | software

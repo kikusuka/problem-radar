@@ -1,14 +1,21 @@
-"""Scheduled refresh. Run by GitHub Actions daily; commits data/cards/*.json back to the repo.
+"""Scheduled refresh. Run by GitHub Actions daily; commits data/research/*.json back to the repo so the hosted
+server answers instantly from fresh results.
 
-    python refresh.py                 # all niches in niches.txt
-    python refresh.py "accounting"    # one niche
+    python refresh.py                  # quick research for every niche in niches.txt
+    python refresh.py deep "accounting"   # deep research for one niche
 """
 import sys
 
-from radar import store
+from radar import research
 
 if __name__ == "__main__":
-    niches = sys.argv[1:] or [n.strip() for n in open("niches.txt") if n.strip() and not n.startswith("#")]
-    for n in niches:
-        d = store.refresh(n)
-        print(f"{n}: scanned {d['posts_scanned']} posts, {len(d['cards'])} verified problems")
+    args = sys.argv[1:]
+    depth = "quick"
+    if args and args[0] in ("quick", "deep"):
+        depth, args = args[0], args[1:]
+    niches = args or [n.strip() for n in open("niches.txt") if n.strip() and not n.startswith("#")]
+    for line in niches:
+        n, _, lens = (p.strip() for p in line.partition("|"))
+        d = research.research(n, depth, force=True, lens=lens or "any")
+        states = {k: v["state"] for k, v in d["coverage"].items()}
+        print(f"{n}: fetched {d['posts_fetched']}, relevant {d['posts_relevant']}, sources {states}")
