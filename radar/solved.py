@@ -14,7 +14,7 @@ import time
 
 from . import sources as S
 from .pain import query_variants, relevance
-from .research import Job, _body, _compact, _dedupe, run_jobs
+from .research import Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
 SOLUTION_RE = re.compile(
     r"\b(alternative|alternatives|saas|plugin|extension|startup|launched|i built|we built|show hn|open[- ]source|app that|"
@@ -149,5 +149,10 @@ def check(problem: str, lens: str = "software") -> dict:
         "papers": papers[:6],
         "public_actions": actions[:5],
         "gap_guide": GAP_ANGLES,
+        "llm_web_search_suggestions": (
+            [f"{variants[0]} buy price", f"{variants[0]} open source", f"best {variants[0]} alternatives", f"{variants[0]} reviews complaints"]
+            if lens in ("hardware", "software", "any") else web_suggestions(variants[0], lens)
+        ),
+        "web_search_note": "If you have a web search tool, run these: this tool cannot see shops, review sites or most news.",
         "next": "Call validate_problem to check demand, then talk to 5 real people about the gap you found.",
     }

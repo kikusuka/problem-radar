@@ -130,13 +130,19 @@ def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
 _reddit_token = {"value": "", "exp": 0.0}
 
 
+def _reddit_ua() -> dict:
+    """Reddit asks for a unique, descriptive User-Agent, e.g. 'problem-radar/4.2 by u/yourname'."""
+    ua = os.environ.get("REDDIT_USER_AGENT")
+    return {"User-Agent": ua} if ua else {}
+
+
 def _reddit_oauth() -> str:
     cid, secret = os.environ.get("REDDIT_CLIENT_ID"), os.environ.get("REDDIT_CLIENT_SECRET")
     if not (cid and secret):
         return ""
     if _reddit_token["value"] and time.time() < _reddit_token["exp"]:
         return _reddit_token["value"]
-    data, _ = _get("https://www.reddit.com/api/v1/access_token", auth=(cid, secret), method="POST",
+    data, _ = _get("https://www.reddit.com/api/v1/access_token", headers=_reddit_ua(), auth=(cid, secret), method="POST",
                    data={"grant_type": "client_credentials"})
     if data and data.get("access_token"):
         _reddit_token.update(value=data["access_token"], exp=time.time() + int(data.get("expires_in", 3600)) - 60)
@@ -150,9 +156,9 @@ def reddit(query: str, limit: int = 20, subreddit: str | None = None, **_) -> Re
         params["restrict_sr"] = 1
     path = f"r/{subreddit}/search" if subreddit else "search"
     if token:
-        data, err = _get(f"https://oauth.reddit.com/{path}", params, {"Authorization": f"bearer {token}"})
+        data, err = _get(f"https://oauth.reddit.com/{path}", params, {**_reddit_ua(), "Authorization": f"bearer {token}"})
     else:
-        data, err = _get(f"https://www.reddit.com/{path}.json", params)
+        data, err = _get(f"https://www.reddit.com/{path}.json", params, _reddit_ua())
     if data is None:
         return Result([], False, err + ("" if token else " (set REDDIT_CLIENT_ID/SECRET for reliable access)"))
     out = []

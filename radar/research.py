@@ -99,7 +99,7 @@ class Job:
 
 
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
-         lens: str = "any") -> list[Job]:
+         lens: str = "any", also: list[str] | None = None) -> list[Job]:
     """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
     lens = lens if lens in LENSES else "any"
     cfg = LENSES[lens]
@@ -110,18 +110,19 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     default = list(cfg["sources"]) + (["github"] if is_dev_niche(niche) and lens in ("software", "any") else [])
     names = [s for s in (sources or default) if s in S.SOURCES]
     queries = [niche] + [f"{niche} {m}" for m in mods]
+    extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # synonyms supplied by the analyst
     jobs: list[Job] = []
     for name in names:
         if name == "se":
             sites = se_sites or (topic_sites(niche) + (cfg["se"] or se_sites_for(niche)))
             sites = list(dict.fromkeys(sites))[:5]
             for site in sites:
-                for q in queries[: 4 if deep else 3]:
+                for q in queries[: 4 if deep else 3] + extra[:2]:
                     jobs.append(Job("se", q, {"site": site}, per))
         elif name == "github":
-            jobs += [Job("github", q, {}, per) for q in queries[:3]]
+            jobs += [Job("github", q, {}, per) for q in queries[:3] + extra[:1]]
         elif name == "scholar":
-            jobs += [Job("scholar", q, {}, per) for q in queries[: 5 if deep else 4]]
+            jobs += [Job("scholar", q, {}, per) for q in queries[: 5 if deep else 4] + extra[:2]]
         elif name == "web":
             if S.enabled()["web"]["enabled"]:
                 jobs += [Job("web", f'{q} problem OR frustrating OR "wish there was"', {}, 20) for q in queries[:3]]
@@ -130,7 +131,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
         elif name in STRUCTURED:
             jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
         else:  # hn, reddit
-            jobs += [Job(name, q, {}, per) for q in queries]
+            jobs += [Job(name, q, {}, per) for q in queries + extra]
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
     return jobs
 
@@ -206,6 +207,10 @@ def _compact(p: S.Post, rel: float, text: str) -> dict:
         out["note"] = "official data: score is " + ("signature count" if p.source == "petitions" else "complaint count")
     if p.source == "scholar":
         out["note"] = "paper: score is citation count, date is publication year; judge the gap from the abstract"
+        for sent in re.split(r"(?<=[.!?])\s+", clean(p.text)):
+            if gap_cues(sent):
+                out["gap_sentence"] = sent[:300]
+                break
     if p.meta.get("views") is not None:
         out["views"], out["answered"] = p.meta["views"], p.meta["answered"]
     return out
@@ -258,7 +263,10 @@ BASE_GUIDE = (
     "4) Check the coverage block: if a source failed or was skipped, say so and suggest follow-up search_pain queries. "
     "5) Score each problem with the fit rubric (see plan_hunt) and rank. "
     "6) For the best 2-3, call validate_problem before recommending a build. "
-    "7) End with a validation plan: who to talk to, 3 questions about the last time it went wrong, and what answer would kill the idea."
+    "7) If few posts survived (posts_relevant under 8), people may use other words: call again with also=[synonyms and related terms] "
+    "and read near_misses. If a web search tool is available to you, run the llm_web_search_suggestions too: these sources cannot see shops, "
+    "review sites or most news. "
+    "8) End with a validation plan: who to talk to, 3 questions about the last time it went wrong, and what answer would kill the idea."
 )
 GOAL_NOTES = {
     "hackathon": "Goal: hackathon. Favour problems demoable in 3 minutes and buildable in 24-48 hours by a small team; a vivid before/after beats a big idea. Give the core demo moment and a 24-hour plan.",
@@ -293,32 +301,61 @@ def build_guide(lens: str = "any", goal: str = "general") -> str:
     return " ".join(x for x in (BASE_GUIDE, GOAL_NOTES.get(goal, ""), LENS_NOTES.get(lens, LENS_NOTES["any"])) if x)
 
 
-def _rank(posts: list[S.Post], niche: str, require_pain: bool = True) -> list[tuple[float, S.Post, float, str]]:
-    ranked = []
+WEB_SUGGESTIONS = {
+    "software": ["{t} problems reddit", "{t} alternatives complaints", "{t} reviews cons g2 OR capterra", "{t} workaround spreadsheet"],
+    "hardware": ["{t} price buy", "{t} open source diy", "{t} reviews complaints", "{t} kickstarter OR crowdfunding"],
+    "policy": ["{t} petition", "{t} law OR bill OR regulation", "{t} city council complaints", "{t} nonprofit campaign"],
+    "research": ["{t} review open problems", "{t} survey future directions", "{t} systematic review research gaps"],
+    "any": ["{t} problems people face", "{t} complaints", "{t} alternatives", "{t} how people cope"],
+}
+
+
+def web_suggestions(term: str, lens: str) -> list[str]:
+    return [q.format(t=term) for q in WEB_SUGGESTIONS.get(lens, WEB_SUGGESTIONS["any"])]
+
+
+def _rel(terms: list[str], text: str) -> float:
+    return max((relevance(t, text) for t in terms), default=1.0)
+
+
+def _rank(posts: list[S.Post], niche, require_pain: bool = True):
+    """Returns (ranked, near_misses). niche may be one topic or a list of equivalent terms (synonyms)."""
+    terms = [niche] if isinstance(niche, str) else list(niche)
+    ranked, misses = _rank_inner(posts, terms, require_pain)
+    return ranked, misses
+
+
+def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
+    ranked, misses = [], []
     for p in _dedupe(posts):
         text = _body(p)
-        rel = relevance(niche, text)
-        if not is_relevant(niche, text):
-            continue
+        rel = _rel(terms, text)
         structured = p.source in STRUCTURED
         paper = p.source == "scholar"
         if require_pain and paper and gap_cues(text) < 1:
             continue
         if require_pain and not structured and not paper and not looks_like_pain(text):
             continue
-        base = heat(text, p.score, p.comments) + 3 * rel + (2 * gap_cues(text) if paper else 0)
-        ranked.append((base + (3 if structured else 0), p, rel, text))
+        score = heat(text, p.score, p.comments) + 3 * rel + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
+        if not any(is_relevant(t, text) for t in terms):
+            if rel > 0:
+                misses.append((score, p, rel, text))
+            continue
+        ranked.append((score, p, rel, text))
     ranked.sort(key=lambda x: x[0], reverse=True)
-    return ranked
+    misses.sort(key=lambda x: x[0], reverse=True)
+    return ranked, misses
 
 
 def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
-             se_sites: list[str] | None = None, force: bool = False, lens: str = "any", goal: str = "general") -> dict:
+             se_sites: list[str] | None = None, force: bool = False, lens: str = "any", goal: str = "general",
+             also: list[str] | None = None) -> dict:
     depth = "deep" if depth == "deep" else "quick"
     lens = lens if lens in LENSES else "any"
     goal = goal if goal in GOALS else "general"
     limit = max(5, min(limit, 60))
-    cacheable = sources is None and se_sites is None
+    also = [t.strip() for t in (also or []) if t and t.strip()][:4]
+    cacheable = sources is None and se_sites is None and not also
     key = f"{slug(niche)}-{depth}-{lens}"
     if cacheable and not force:
         hit = _load(key)
@@ -329,9 +366,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
             hit["analysis_guide"] = build_guide(lens, goal)
             return hit
 
-    jobs = plan(niche, depth, sources, se_sites, lens)
+    jobs = plan(niche, depth, sources, se_sites, lens, also)
     raw, status = run_jobs(jobs)
-    ranked = _rank(raw, niche)
+    ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
     payload = {
         "niche": niche,
@@ -342,6 +379,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "queries_run": len(jobs),
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
+        "searched_terms": [niche] + also,
         "coverage": status,
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
         "recurring_themes": themes(kept, niche),
@@ -349,6 +387,15 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "analysis_guide": build_guide(lens, goal),
         "from_cache": False,
     }
+    if len(kept) < 10 and misses:
+        payload["near_misses"] = [
+            {"title": p.title[:120], "url": p.url, "source": p.source, "snippet": clean(p.text or p.title)[:160]}
+            for _, p, _, _ in misses[:8]
+        ]
+        payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
+                                       "for the same thing. Judge them, and retry with also=[synonyms].")
+    if not S.enabled()["web"]["enabled"]:
+        payload["llm_web_search_suggestions"] = web_suggestions(niche, lens)
     if not kept:
         payload["note"] = ("No relevant complaints found. See coverage for failed or skipped sources. "
                            "Try a broader niche, depth='deep', another lens, or search_pain with your own wording.")
@@ -370,7 +417,7 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
         else:
             jobs.append(Job(n, query, {}, limit))
     raw, status = run_jobs(jobs)
-    ranked = _rank(raw, query, require_pain=False)
+    ranked, _ = _rank(raw, [query], require_pain=False)
     return {
         "query": query,
         "coverage": status,

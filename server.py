@@ -79,8 +79,12 @@ def explore_domains(interest: str = "") -> dict:
 
 @mcp.tool()
 def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: str = "quick", limit: int = 25,
-                   refresh: bool = False, sources: list[str] | None = None, se_sites: list[str] | None = None) -> dict:
+                   refresh: bool = False, sources: list[str] | None = None, se_sites: list[str] | None = None,
+                   also: list[str] | None = None) -> dict:
     """Research a niche for real, recurring problems.
+
+    also: synonyms and related terms (e.g. ["wheelchair", "prosthetic", "hearing aid"] for "assistive devices"). People
+    rarely use your exact words, so pass these whenever you can, especially if few posts come back.
 
     lens picks where and how to search: software (tools, automation), hardware (devices, DIY, products),
     policy (rules, services, civic fixes; includes UK petition signature counts and NYC 311 complaint counts),
@@ -91,7 +95,7 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     and follow the analysis_guide. depth: quick (default) or deep. sources: any of hn, se, reddit, github, web, petitions,
     nyc311, scholar. se_sites: Stack Exchange site names, e.g. ["electronics", "diy"]. Cached 36h; refresh=True re-runs.
     """
-    return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal)
+    return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also)
 
 
 @mcp.tool()

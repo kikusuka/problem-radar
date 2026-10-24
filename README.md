@@ -108,7 +108,10 @@ It is the best source for everyday problems, so add free credentials:
 
 1. Go to reddit.com/prefs/apps, choose "create another app", type **script**, any name, redirect URI `http://localhost`.
 2. Copy the client ID (under the app name) and the secret.
-3. Set `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` as environment variables on your host and redeploy.
+3. Set `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` (for example `problem-radar/4.2 by u/your-name`)
+   as environment variables on your host. Only these three are needed: the server uses Reddit's read-only app login,
+   so never set a Reddit username or password. If you already have a script app, reuse it. Keep the secret out of git.
+4. Check `source_status`: Reddit should say `oauth`, and a research run should show Reddit as `ok`.
 
 Check Reddit's current API terms before publishing a public server that uses it.
 
@@ -118,6 +121,11 @@ Early versions searched "niche + exact phrase" and returned almost nothing for s
 as topic words, and once reported "no solution found" for something that obviously exists. The current design
 searches broadly, judges pain locally, requires every word of a short topic to match, and reports thin evidence as
 **inconclusive** instead of "unsolved". Each of these has a regression test.
+
+Version 4.2 also added: an `also` parameter so the LLM can pass synonyms (people rarely use your exact words),
+`near_misses` so thin results are never silently empty, the sentence in each paper that states the gap, and
+ready-to-run web search queries for LLMs that have their own search tool (shops, review sites and most news are
+invisible to the built-in sources).
 
 ## Limits worth knowing
 

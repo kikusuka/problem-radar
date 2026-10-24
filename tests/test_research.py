@@ -271,3 +271,74 @@ def test_academic_filler_is_not_a_theme():
     ps = [P("scholar", i, "A study", "This study presents results of a review of the methods and data conducted in background analysis of exoskeleton gloves", "", 1, 0) for i in range(3)]
     terms = {t["term"] for t in research.themes(ps, "exoskeleton gloves")}
     assert not terms & {"study", "results", "methods", "data", "conducted", "review", "analysis", "background"}
+
+
+# ---------------------------------------------------------------- v4.2: synonyms, near misses, web suggestions
+def test_synonyms_via_also_recover_posts_that_use_other_words(monkeypatch):
+    wc = S.Post("hn", "hn-w1", "Wheelchair power assist is unaffordable", "frustrating: a wheelchair power assist costs thousands, unaffordable for most users",
+                "https://news.ycombinator.com/item?id=1", "u1", 5, 2, "2026-01-01")
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result([wc]))
+    monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result([]))
+    plain = research.research("assistive devices", lens="hardware", force=True)
+    assert plain["posts_relevant"] == 0
+    assert any("Wheelchair" in m["title"] for m in plain["near_misses"]) and "also=" in plain["near_misses_note"]
+    with_syn = research.research("assistive devices", lens="hardware", also=["wheelchair"], force=True)
+    assert with_syn["posts_relevant"] == 1 and with_syn["searched_terms"] == ["assistive devices", "wheelchair"]
+    jobs = research.plan("assistive devices", "quick", lens="hardware", also=["wheelchair", "prosthetic"])
+    assert any(j.query == "wheelchair" for j in jobs if j.source == "hn")
+
+
+def test_papers_show_the_sentence_that_states_the_gap(monkeypatch):
+    paper = S.Post("scholar", "oa-9", "Hand rehabilitation robots",
+                   "Robots help recovery in many clinics. Little is known about home use by older adults. We review devices.",
+                   "https://doi.org/10.1/g", "", 12, 0, "2025", {"site": "openalex"})
+    monkeypatch.setitem(S.SOURCES, "scholar", lambda q, limit=20, **k: S.Result([paper]))
+    out = research.research("hand rehabilitation robots", lens="research", goal="research", force=True)
+    item = next(p for p in out["top_posts"] if p["source"].startswith("scholar"))
+    assert item["gap_sentence"].startswith("Little is known about home use")
+
+
+def test_web_search_suggestions_offered_when_no_web_key():
+    out = research.research("assistive devices", lens="hardware", force=True)
+    assert any("price buy" in q for q in out["llm_web_search_suggestions"])
+
+
+def test_check_if_solved_suggests_product_searches(monkeypatch):
+    for src in ("github_repo", "scholar", "hn", "reddit"):
+        monkeypatch.setitem(S.SOURCES, src, lambda q, limit=15, **k: S.Result([]))
+    out = solved.check("low-cost assistive device for limited hand mobility", "hardware")
+    assert any("buy price" in q for q in out["llm_web_search_suggestions"]) and "web search" in out["web_search_note"]
+
+
+def test_research_tool_accepts_also():
+    import server
+    tool = next(t for t in asyncio.run(server.mcp.list_tools()) if t.name == "research_niche")
+    assert "also" in tool.inputSchema["properties"]
+
+
+# ---------------------------------------------------------------- Reddit app login (no username or password)
+def test_reddit_uses_app_login_with_user_agent_and_never_a_password(monkeypatch):
+    calls = []
+
+    def fake_get(url, params=None, headers=None, auth=None, method="GET", data=None):
+        calls.append({"url": url, "headers": headers or {}, "auth": auth, "method": method, "data": data})
+        if "access_token" in url:
+            return {"access_token": "tok123", "expires_in": 3600}, ""
+        return {"data": {"children": [{"data": {"id": "a1", "title": "Need a better grip aid", "selftext": "it is expensive and I struggle",
+                                                 "permalink": "/r/x/comments/a1/", "author": "u", "score": 3, "num_comments": 1,
+                                                 "created_utc": 1700000000, "subreddit": "x"}}]}}, ""
+
+    monkeypatch.setattr(S, "_get", fake_get)
+    monkeypatch.setitem(S._reddit_token, "value", "")
+    monkeypatch.setitem(S._reddit_token, "exp", 0.0)
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "id123")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret123")
+    monkeypatch.setenv("REDDIT_USER_AGENT", "problem-radar/4.2 by u/tester")
+    res = S.reddit("grip aid", 5)
+    assert res.ok and res.posts[0].title == "Need a better grip aid"
+    token_call, search_call = calls
+    assert token_call["data"] == {"grant_type": "client_credentials"} and token_call["auth"] == ("id123", "secret123")
+    assert "password" not in str(token_call["data"]).lower()
+    assert search_call["url"].startswith("https://oauth.reddit.com/") and search_call["headers"]["Authorization"] == "bearer tok123"
+    assert search_call["headers"]["User-Agent"] == "problem-radar/4.2 by u/tester"
+    assert S.enabled()["reddit"]["note"] == "oauth"
