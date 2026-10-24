@@ -193,13 +193,22 @@ def query_variants(problem: str) -> list[str]:
     return out or [problem]
 
 
-def relevance(niche: str, text: str) -> float:
+def _has_word(word: str, text: str, loose: bool = False) -> bool:
+    """Match at the start of a word only. Short words (under 5 letters) must match whole words, so 'aid' is not
+    found in 'said' and 'grip' is not found in 'gripping'. Longer words match their 5-letter stem ('invoices' ~ 'invoice')."""
+    w = word.lower()
+    if len(w) < 5:
+        return re.search(r"\b" + re.escape(w) + r"s?\b", text, re.I) is not None
+    stem = w[:5] if loose else w[:min(7, max(5, len(w) - 2))]  # 'assistive' -> 'assisti', so it does not match 'assistant'
+    return re.search(r"\b" + re.escape(stem), text, re.I) is not None
+
+
+def relevance(niche: str, text: str, loose: bool = False) -> float:
     """Share of the niche's content words found in the text (prefix match so 'invoices' matches 'invoice')."""
     words = content_words(niche)
     if not words:
         return 1.0
-    low = text.lower()
-    return sum(1 for w in words if w[:5] in low) / len(words)
+    return sum(1 for w in words if _has_word(w, text, loose)) / len(words)
 
 
 def is_relevant(niche: str, text: str) -> bool:

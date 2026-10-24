@@ -26,11 +26,9 @@ SE = [
 def fakes(monkeypatch, tmp_path):
     monkeypatch.setattr(research, "RESEARCH_DIR", tmp_path)
     research._mem.clear()
-    monkeypatch.delenv("BRAVE_API_KEY", raising=False)
     monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(list(HN)))
     monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result(list(SE)))
     monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([], False, "blocked or unauthorized (403)"))
-    monkeypatch.setitem(S.SOURCES, "web", lambda q, limit=20, **k: S.Result([], True, "BRAVE_API_KEY not set", skipped=True))
 
 
 def test_coverage_reports_every_source_state():
@@ -39,7 +37,7 @@ def test_coverage_reports_every_source_state():
     assert cov["hn"]["state"] == "ok"
     assert cov["se"]["state"] == "ok"
     assert cov["reddit"]["state"] == "failed" and "403" in cov["reddit"]["errors"][0]
-    assert cov["web"]["state"] == "skipped"
+    assert "web" not in cov  # no paid or limited web search; the chatting LLM uses its own
 
 
 def test_offtopic_posts_are_dropped_and_relevant_ranked():
@@ -342,3 +340,13 @@ def test_reddit_uses_app_login_with_user_agent_and_never_a_password(monkeypatch)
     assert search_call["url"].startswith("https://oauth.reddit.com/") and search_call["headers"]["Authorization"] == "bearer tok123"
     assert search_call["headers"]["User-Agent"] == "problem-radar/4.2 by u/tester"
     assert S.enabled()["reddit"]["note"] == "oauth"
+
+
+def test_relevance_matches_word_starts_not_substrings():
+    from radar.pain import relevance
+    assert relevance("hearing aid", "He said the film was gripping") == 0.0 or relevance("hearing aid", "He said the film was gripping") < 1.0
+    assert relevance("aid", "he said hello") == 0.0
+    assert relevance("grip", "a gripping film") == 0.0
+    assert relevance("grip aid", "my grip aid broke") == 1.0
+    assert relevance("invoices", "the invoice export is broken") == 1.0
+    assert relevance("assistive devices", "Home Assistant dashboard") < 1.0

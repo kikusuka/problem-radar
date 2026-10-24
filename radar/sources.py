@@ -6,7 +6,6 @@ Sources (all free; keys are optional upgrades):
   reddit  Reddit                             public JSON often blocked from cloud IPs;
                                              set REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET for reliable OAuth access
   github  GitHub issues                      GITHUB_TOKEN recommended
-  web     Brave Search API                   needs BRAVE_API_KEY; reaches review sites and forums
   petitions  UK Parliament petitions         no key; signature counts show public demand (UK only)
   nyc311     NYC 311 complaints              no key; complaint counts by type (NYC only)
 """
@@ -193,22 +192,6 @@ def github(query: str, limit: int = 20, **_) -> Result:
     return Result(out)
 
 
-# ------------------------------------------------- Brave web search (optional)
-def web(query: str, limit: int = 20, **_) -> Result:
-    key = os.environ.get("BRAVE_API_KEY")
-    if not key:
-        return Result([], True, "BRAVE_API_KEY not set", skipped=True)
-    data, err = _get("https://api.search.brave.com/res/v1/web/search", {"q": query, "count": min(limit, 20)},
-                     {"X-Subscription-Token": key, "Accept": "application/json"})
-    if data is None:
-        return Result([], False, err)
-    out = []
-    for r in (data.get("web") or {}).get("results", []):
-        url = r.get("url") or ""
-        domain = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
-        out.append(Post("web", f"web-{url}", _plain(r.get("title")), _plain(r.get("description")), url, domain,
-                        0, 0, (r.get("page_age") or "")[:10], {"site": domain}))
-    return Result(out)
 
 
 
@@ -320,7 +303,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "github": github, "web": web,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -336,5 +319,4 @@ def enabled() -> dict:
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
         "github": {"enabled": True, "note": "token set" if os.environ.get("GITHUB_TOKEN") else "no token: low rate limit"},
-        "web": {"enabled": bool(os.environ.get("BRAVE_API_KEY")), "note": "Brave key set" if os.environ.get("BRAVE_API_KEY") else "set BRAVE_API_KEY to reach review sites and forums"},
     }

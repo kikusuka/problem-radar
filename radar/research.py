@@ -38,12 +38,12 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["hn", "se", "reddit", "web"], "se": None},
-    "any": {"sources": ["hn", "se", "reddit", "web"], "se": None},
-    "hardware": {"sources": ["se", "reddit", "hn", "web"],
+    "software": {"sources": ["hn", "se", "reddit"], "se": None},
+    "any": {"sources": ["hn", "se", "reddit"], "se": None},
+    "hardware": {"sources": ["se", "reddit", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
-    "policy": {"sources": ["petitions", "nyc311", "reddit", "hn", "web", "se"], "se": ["politics", "law", "economics"]},
-    "research": {"sources": ["scholar", "se", "hn", "reddit", "web"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
+    "policy": {"sources": ["petitions", "nyc311", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
+    "research": {"sources": ["scholar", "se", "hn", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
 }
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
 
@@ -123,11 +123,6 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
             jobs += [Job("github", q, {}, per) for q in queries[:3] + extra[:1]]
         elif name == "scholar":
             jobs += [Job("scholar", q, {}, per) for q in queries[: 5 if deep else 4] + extra[:2]]
-        elif name == "web":
-            if S.enabled()["web"]["enabled"]:
-                jobs += [Job("web", f'{q} problem OR frustrating OR "wish there was"', {}, 20) for q in queries[:3]]
-            else:
-                jobs.append(Job("web", niche, {}, 1))  # one job so the report says it was skipped
         elif name in STRUCTURED:
             jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
         else:  # hn, reddit
@@ -338,7 +333,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
             continue
         score = heat(text, p.score, p.comments) + 3 * rel + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
         if not any(is_relevant(t, text) for t in terms):
-            if rel > 0:
+            if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):  # near miss: loose stems
                 misses.append((score, p, rel, text))
             continue
         ranked.append((score, p, rel, text))
@@ -394,8 +389,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         ]
         payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
                                        "for the same thing. Judge them, and retry with also=[synonyms].")
-    if not S.enabled()["web"]["enabled"]:
-        payload["llm_web_search_suggestions"] = web_suggestions(niche, lens)
+    payload["llm_web_search_suggestions"] = web_suggestions(niche, lens)  # your own search tool covers shops, reviews and news
     if not kept:
         payload["note"] = ("No relevant complaints found. See coverage for failed or skipped sources. "
                            "Try a broader niche, depth='deep', another lens, or search_pain with your own wording.")
@@ -407,7 +401,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
 def search(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
            se_sites: list[str] | None = None) -> dict:
     """Raw search with your own wording. Still dedupes and drops posts that don't match."""
-    names = [s for s in (sources or ["hn", "se", "reddit", "web"]) if s in S.SOURCES]
+    names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
     jobs = []
     for n in names:
         if n == "se":
@@ -454,8 +448,6 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
     jobs = []
     for q in qs:
         jobs += [Job("hn", q, {}, 15), Job("reddit", q, {}, 15)]
-        if S.enabled()["web"]["enabled"]:
-            jobs.append(Job("web", q, {}, 10))
     if lens == "policy":
         jobs += [Job("petitions", problem, {}, 15), Job("nyc311", problem, {}, 15)]
     for s in (LENSES[lens]["se"] if lens in ("hardware", "policy") else se_sites_for(niche or problem))[:2]:

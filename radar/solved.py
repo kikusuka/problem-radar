@@ -114,8 +114,6 @@ def check(problem: str, lens: str = "software") -> dict:
             jobs += [Job("reddit", f"{v} diy", {}, 15), Job("reddit", f"{v} I bought", {}, 15)]
         if lens == "policy":
             jobs += [Job("petitions", v, {}, 15), Job("reddit", f"{v} law OR policy OR campaign", {}, 15)]
-    if S.enabled()["web"]["enabled"]:
-        jobs += [Job("web", f"{variants[0]} app OR tool OR product", {}, 10), Job("web", f"best {variants[0]} alternatives", {}, 10)]
     raw, status = run_jobs(jobs)
 
     key = variants[0]
