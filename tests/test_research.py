@@ -872,7 +872,7 @@ def test_research_fallback_stays_inside_one_shared_job_budget(monkeypatch):
     assert out["queries_planned"] > out["queries_budgeted"]
     assert out["queries_budgeted"] <= research.MAX_JOBS_PER_REQUEST
     assert out["queries_run"] <= research.MAX_JOBS_PER_REQUEST
-    assert out["coverage"]["ddg"]["request_limited"] is True
+    assert out["coverage"]["ddg"]["jobs"] == research.MAX_FALLBACK_JOBS
 
 
 def test_validation_applies_hard_constraints_to_document_not_every_sentence(monkeypatch):
