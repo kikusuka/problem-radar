@@ -107,8 +107,11 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     Stack Exchange, Reddit, optional GitLab public issues (requires GITLAB_TOKEN), GitHub issues for developer niches,
     OpenAlex and Europe PMC papers, arXiv preprints for research, and applicable official civic data. Bluesky is excluded
     from default queries until its live HTTP 403 is resolved, but can be explicitly selected for diagnostics.
+    Default lens plans prioritize direct Reddit search. Reddit community discovery is opt-in via sources=["reddit_community"]
+    because that adapter consumes both Reddit request units and can displace direct complaint retrieval.
     The planner uses short constraint-preserving queries first, then supplied synonyms before generic modifiers; relevance
-    uses topic anchors and hard-constraint checks. Cross-source duplicate titles are collapsed. There is no automatic
+    uses stricter topic-anchor coverage and hard-constraint checks. Promotional launches are surfaced as product leads
+    in near_misses rather than ranked as independent pain evidence. Cross-source duplicate titles are collapsed. There is no automatic
     general web-search fallback or paid-provider substitution. The public request budget admits at most 16 source jobs
     and at most two outbound request units per upstream provider; authentication handshakes count where relevant.
     Check queries_planned, queries_budgeted, provider_request_units_budgeted, queries_run, queries_succeeded,
