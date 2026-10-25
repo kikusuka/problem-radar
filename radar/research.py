@@ -704,7 +704,7 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
             buckets["existing_solutions"].append(item)
 
         for sentence in relevant_sentences:
-            if PAYMENT_EVIDENCE.search(sentence):
+            if PAYMENT_EVIDENCE.search(sentence) and not PAYMENT_INTENT.search(sentence) and not PAYMENT_NEGATION.search(sentence):
                 buckets["paying_signals"].append(item)
                 break
         for sentence in relevant_sentences:
