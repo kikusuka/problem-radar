@@ -246,18 +246,18 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     # then a compact alternative and finally generic modifiers. Under the 1–2 request
     # cap, this makes selected calls meaningfully different instead of "niche problem".
     expanded = query_expansions(niche, max_variants=4)
-    # For explicit failure searches, failure aliases outrank broad synonym terms;
-    # otherwise preserve the caller's also terms before generated alternatives.
+    # Failure queries need controlled error synonyms first; ordinary queries should
+    # honor analyst-provided equivalents before generic generated variants.
     failure_query = bool(re.search(
         r"\b(?:crash(?:es|ed|ing)?|oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|"
         r"memory exhaustion|not enough ram|memory leak|freez(?:e|es|ing|en)?|hangs?|hung|"
         r"fails? to load|failure to load|battery drain)\b",
         niche, re.I,
     ))
-    # Constraint-preserving expansions come before broad analyst synonyms. Each provider
-    # gets the shared primary query, then a rotated alternate so one synonym does not
-    # consume every provider's second request slot.
-    queries = list(dict.fromkeys([compact[0]] + expanded + extra_queries + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
+    alternate_pool = expanded + extra_queries if failure_query else extra_queries + expanded
+    queries = list(dict.fromkeys(
+        [compact[0]] + alternate_pool + compact[1:] + [f"{compact[0]} {m}" for m in mods]
+    ))
     jobs: list[Job] = []
     for source_index, name in enumerate(names):
         source_queries = _query_order_for_source(queries, source_index)
