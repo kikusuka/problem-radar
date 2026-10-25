@@ -1,13 +1,16 @@
-"""Source adapters. Every adapter returns a Result and never raises, so one broken source can't sink a run.
+"""Source adapters. Every adapter returns a Result so one broken source can't sink a run.
 
-Sources (all free; keys are optional upgrades):
-  hn      Hacker News via Algolia            no key
-  se      Stack Exchange network             no key (STACKEXCHANGE_KEY raises the daily quota)
-  reddit  Reddit                             public JSON often blocked from cloud IPs;
-                                             set REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET for reliable OAuth access
-  github  GitHub issues                      GITHUB_TOKEN recommended
-  petitions  UK Parliament petitions         no key; signature counts show public demand (UK only)
-  nyc311     NYC 311 complaints              no key; complaint counts by type (NYC only)
+Sources (free tiers; quotas and access policies still apply):
+  hn         Hacker News / Algolia           no key
+  se         Stack Exchange                  optional free STACKEXCHANGE_KEY
+  reddit     Reddit                          OAuth credentials recommended; review current API terms
+  github     GitHub issues and repositories  optional GITHUB_TOKEN
+  scholar    OpenAlex papers                 optional free OPENALEX_API_KEY
+  tavily     Web search fallback             optional free TAVILY_API_KEY; 1,000 credits/month
+  ddg        DuckDuckGo HTML scraping        opt-in only; brittle and may be blocked
+  petitions  UK Parliament petitions         no key; UK only
+  nyc311     NYC 311 complaints              no key; NYC only
+  openFDA    Medical-device event reports    no key; US only
 """
 from __future__ import annotations
 
