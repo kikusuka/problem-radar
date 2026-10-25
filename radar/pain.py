@@ -282,7 +282,7 @@ _CONSTRAINT_DENIALS = {
     ),
     "on-device/local execution": re.compile(
         r"\b(?:cloud[- ]based only|remote[- ]only|server[- ]only)\b|"
-        r"\b(?:not|isn't|is not|doesn't run|does not run|cannot run|can't run)\b.{0,35}\b(?:on[- ]device|locally|local inference)\b",
+        r"\b(?:not|isn't|is not|doesn't run|does not run|cannot run|can't run|won't work)\b.{0,35}\b(?:on[- ]device|locally|local(?:\s+(?:ai|model|llm|inference|execution|processing))?)\b",
         re.I,
     ),
     "low-resource hardware": re.compile(
