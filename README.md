@@ -54,12 +54,18 @@ deduplicated. One tool call can schedule at most 16 source jobs. Each upstream p
 two outbound request units per public MCP tool call; Reddit's community adapter uses both units for one
 community-discovery query and one complaint query, while GitHub issue and repository searches share a budget.
 When Reddit OAuth must obtain a new access token, that token request also consumes one unit, so the first
-call uses a single Reddit data search rather than exceeding the two-request cap.
-arXiv requests are spaced by at least three seconds process-wide. There are no automatic web-search fallbacks,
-quota-exhaustion retries, or paid-provider substitutions. Across concurrent calls, the shared executor has
+call uses a single Reddit data search rather than exceeding the two-request cap. A configured OAuth failure does
+not silently switch to anonymous Reddit access. arXiv requests are spaced by at least three seconds process-wide.
+There are no automatic web-search fallbacks, quota-exhaustion retries, or paid-provider substitutions.
+
+Across concurrent calls in one server process, shared no-wait provider token buckets allow a burst of two HTTP
+requests per provider and refill at provider-specific intervals (for example, two seconds for Reddit, Stack Exchange,
+GitLab, and authenticated GitHub search; unauthenticated GitHub refills more slowly). A provider HTTP 429 triggers
+a bounded cooldown with no retry. This is an in-memory per-process limiter: it resets on restart and does not enforce
+a durable daily quota across multiple service instances or identify individual MCP clients. The shared executor has
 8 workers and a 32-job in-flight cap. Queued work that misses the request deadline is cancelled where possible;
-running work retains its capacity slot until it actually finishes. These are workload guardrails, not per-client
-rate limiting or DDoS protection: public visitors still share the same upstream API quotas and source capacity.
+running work retains its capacity slot until it actually finishes. These are burst guards, not DDoS protection, and
+all public visitors still share upstream quotas.
 
 Read coverage before drawing conclusions. `queries_planned` counts planned source jobs; `queries_budgeted`
 counts jobs admitted after the global and per-provider caps, while `provider_request_units_budgeted` estimates
@@ -82,6 +88,8 @@ Neither public posts nor a willingness-to-pay statement alone validates a market
 Searches schedule a small number of equivalent queries inside the same source-job and provider-request budgets. `query_variants_scheduled` reports the distinct query strings actually selected for that call. Technical-failure alternatives replace the failure phrase (for example, crash wording with an OOM or freeze equivalent) rather than appending every synonym to an AND-style query. Query-based providers share the primary query, then rotate alternate wording across providers so each provider's limited second request can explore a different variant. There is no second search phase, paid fallback, or unbounded retry.
 
 Complaint results and solution leads are different kinds of evidence. Results may include an `evidence_kind` such as `technical_failure_report`, `reported_complaint`, `workaround_or_manual_process`, `help_request`, `product_comparison`, `product_announcement`, `solution_showcase`, `technical_tutorial`, or `general_discussion`. A specific LLM query also requires an LLM/language-model/runtime cue; Android plus generic crash or memory vocabulary is not enough. These labels are transparent heuristics for inspection, not proof that a post is genuine. Promotional announcements and detected solution showcases do not qualify as independent complaint results; relevant leads are kept in `near_misses` where the relevance checks support it.
+
+For `check_if_solved`, the server searches short subject-first product variants as well as the constraint-rich wording. It separates topical match from requirement fit: an existing project that is about Android local LLMs but does not document offline or low-resource support appears in `constraint_near_misses`, not as a proven matching solution and not as if nothing related exists. Inspect `solution_search_queries` to see what the product-discovery calls actually searched.
 
 `search_diagnostics` distinguishes qualifying results, related candidates only, limited coverage, source failures, and completed searches with no qualifying evidence. An empty result is never proof that a problem does not exist.
 
