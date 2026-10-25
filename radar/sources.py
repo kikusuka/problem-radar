@@ -81,7 +81,7 @@ def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
 
 
 # ---------------------------------------------------------------- Hacker News
-def hn(query: str, limit: int = 20, since_days: int = 730, **_) -> Result:
+def hn(query: str, limit: int = 20, since_days: int = 0, **_) -> Result:  # all time: an old problem that is still unsolved still counts
     params = {"query": query, "tags": "(story,comment)", "hitsPerPage": limit}
     if since_days:
         params["numericFilters"] = f"created_at_i>{int(time.time()) - since_days * 86400}"
@@ -156,9 +156,9 @@ def _reddit_oauth() -> str:
     return _reddit_token["value"]
 
 
-def reddit(query: str, limit: int = 20, subreddit: str | None = None, sort: str = "relevance", **_) -> Result:
+def reddit(query: str, limit: int = 20, subreddit: str | None = None, sort: str = "relevance", t: str = "all", **_) -> Result:
     token = _reddit_oauth()
-    params = {"q": query, "sort": sort, "t": "year", "limit": min(limit, 50)}
+    params = {"q": query, "sort": sort, "t": t, "limit": min(limit, 50)}
     if subreddit:
         params["restrict_sr"] = 1
     path = f"r/{subreddit}/search" if subreddit else "search"

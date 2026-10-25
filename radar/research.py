@@ -20,7 +20,7 @@ from pathlib import Path
 from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
-from .pain import (gap_cues, HACK_WORDS, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_relevant, looks_like_pain, relevance,
+from .pain import (gap_cues, HACK_WORDS, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, relevance,
                    signals)
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -198,6 +198,23 @@ def _body(p: S.Post) -> str:
     return clean(f"{p.title} {p.text}")
 
 
+EVIDENCE_TYPE = {"hn": "reported_need", "reddit": "reported_need", "se": "reported_need", "github": "reported_need",
+                 "fda_devices": "measured_outcome", "petitions": "service_request", "nyc311": "service_request",
+                 "scholar": "research_gap", "europepmc": "research_gap", "ddg": "web_lead"}
+
+EVIDENCE_NOTE = ("Evidence type: public online posts and open data. Not a survey: who is represented is unknown. Likely over-represented: "
+                 "connected, literate, active platform users. Likely under-represented: offline, low-literacy, elderly, rural, disabled and "
+                 "informal workers. Contributors are not identified. Older posts are included on purpose: a problem still unsolved years "
+                 "later is still a gap, but check it with check_if_solved. Talking to 5 people who have the problem beats any search.")
+
+
+def _age_years(date: str) -> int | None:
+    try:
+        return max(0, time.gmtime().tm_year - int(date[:4]))
+    except Exception:
+        return None
+
+
 def _compact(p: S.Post, rel: float, text: str) -> dict:
     where = p.source + (f"/{p.meta['site']}" if p.meta.get("site") and p.source not in STRUCTURED else "")
     out = {
@@ -205,13 +222,16 @@ def _compact(p: S.Post, rel: float, text: str) -> dict:
         "snippet": clean(p.text or p.title)[:260],
         "url": p.url,
         "source": where,
-        "author": p.author,
+        "evidence_type": EVIDENCE_TYPE.get(p.source, "reported_need"),
         "date": p.created,
         "score": p.score,
         "comments": p.comments,
         "relevance": round(rel, 2),
         "signals": signals(text),
     }
+    age = _age_years(p.created)
+    if age is not None:
+        out["age_years"] = age
     if p.source == "fda_devices":
         out["note"] = "FDA adverse-event report: a real device failure, unvalidated; shows the failure exists, not how common it is"
         out["device"] = p.meta.get("device", "")
@@ -356,7 +376,8 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
             continue
         title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0  # topic in the title beats a body mention
         score = heat(text, p.score, p.comments) + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
-        if not community and not any(is_relevant(t, text) for t in terms):
+        about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
+        if not community and (not about or not any(is_relevant(t, text) for t in terms)):
             if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):  # near miss: loose stems
                 misses.append((score, p, rel, text))
             continue
@@ -441,6 +462,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         ]
         payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
                                        "for the same thing. Judge them, and retry with also=[synonyms].")
+    payload["evidence_note"] = EVIDENCE_NOTE
     if fallback_note:
         payload["fallback_note"] = fallback_note
     if reg:

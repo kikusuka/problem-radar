@@ -547,3 +547,45 @@ def test_ddg_is_used_only_when_results_are_thin(monkeypatch):
     assert rich["posts_relevant"] >= 8 and "ddg" not in rich["coverage"] and "fallback_note" not in rich
     explicit = research.research("elder care", sources=["hn"], force=True)
     assert "ddg" not in explicit["coverage"]
+
+
+def test_a_passing_mention_does_not_make_a_post_about_the_topic():
+    from radar.pain import is_focused
+    politics = ("I don't think people realize how dangerous he is. " + "filler words about the election and Ohio politics " * 12
+                + "Before politics he ran Axovant, a dementia drug company. " + "more about the polls " * 5)
+    assert not is_focused(["dementia"], "I don't think people realize how dangerous he is", politics)
+    assert is_focused(["dementia"], "Dementia care is hard", "x")                    # in the title
+    assert is_focused(["dementia"], "Help", "My mother has dementia and we cannot cope. " + "word " * 100)  # opening lines
+    assert is_focused(["dementia"], "Help", "word " * 100 + "dementia is hard " + "word " * 10 + "dementia again")  # twice
+
+
+def test_ranking_drops_posts_that_only_mention_the_topic_in_passing():
+    off = S.Post("hn", "hn-off", "Why the election matters", "frustrating politics, so expensive. " * 12 + "He once ran a dementia drug company. " + "more politics " * 30,
+                 "https://hn/off", "u1", 5, 1, "2026-01-01")
+    on = S.Post("hn", "hn-on", "Caring for a parent with dementia", "so frustrating and expensive, I wish there was a better way", "https://hn/on", "u2", 5, 1, "2026-01-01")
+    ranked, _ = research._rank([off, on], ["dementia"])
+    assert [x[1].id for x in ranked] == ["hn-on"]
+
+
+def test_output_hides_usernames_and_labels_evidence_and_age():
+    out = research.research("accounting invoices", force=True)
+    assert out["top_posts"] and all("author" not in p for p in out["top_posts"])
+    assert all(p["evidence_type"] in ("reported_need", "measured_outcome", "service_request", "research_gap", "web_lead") for p in out["top_posts"])
+    assert all("age_years" in p for p in out["top_posts"]) and "not a survey" in out["evidence_note"].lower()
+
+
+def test_old_posts_are_not_filtered_out(monkeypatch):
+    seen = {}
+
+    def fake(url, params=None, headers=None, **k):
+        seen.update(params or {})
+        return {"hits": []}, ""
+
+    monkeypatch.setattr(S, "_get", fake)
+    S.hn("wheelchair")
+    assert "numericFilters" not in seen
+    calls = {}
+    monkeypatch.setattr(S, "_reddit_json", lambda path, params: (calls.update(params) or {"data": {"children": []}}, ""))
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (calls.update(a[1] or {}) or {"data": {"children": []}}, ""))
+    S.reddit("wheelchair")
+    assert calls.get("t") == "all"

@@ -220,6 +220,22 @@ def _near(words: list[str], text: str, window: int = 8) -> bool:
     return any(all(any(abs(q - a) <= window for q in ps) for ps in pos[1:]) for a in pos[0])
 
 
+def mentions(term: str, text: str) -> int:
+    """How many times the topic's main word appears. One passing mention does not make a post about the topic."""
+    words = content_words(term)
+    if not words:
+        return 0
+    w = max(words, key=len)
+    stem = w[:min(7, max(5, len(w) - 2))] if len(w) >= 5 else w
+    tokens = re.findall(r"[a-z0-9']+", text.lower())
+    return sum(1 for t in tokens if (t.startswith(stem) if len(w) >= 5 else t in (w, w + "s")))
+
+
+def is_focused(terms: list[str], title: str, text: str) -> bool:
+    """The post is ABOUT the topic: it is in the title, in the opening lines, or comes up more than once."""
+    return any(is_relevant(t, title) or is_relevant(t, text[:350]) or mentions(t, text) >= 2 for t in terms)
+
+
 def relevance(niche: str, text: str, loose: bool = False) -> float:
     """Share of the niche's content words found in the text (prefix match so 'invoices' matches 'invoice')."""
     words = content_words(niche)
