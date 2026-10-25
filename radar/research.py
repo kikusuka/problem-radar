@@ -672,7 +672,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         # in near_misses rather than promoting them to complaint results.
         non_complaint_artifact = (
             profile["promotional"]
-            or profile["evidence_kind"] in {"solution_showcase", "technical_tutorial"}
+            or profile["evidence_kind"] in {"solution_showcase", "technical_tutorial", "vendor_editorial"}
         )
         if non_complaint_artifact and not structured and not paper:
             topic_related = any(_product_lead_topic_match(t, text, p.title) for t in topic_terms)
@@ -986,6 +986,14 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
         item = _compact(p, rel, text)
         if any(solution_re.search(sentence) for sentence in relevant_sentences):
             buckets["existing_solutions"].append(item)
+
+        # A vendor guide or software roundup may be a useful product lead, but its
+        # pricing and workflow words are not independent user demand or workaround evidence.
+        profile = signal_profile(text)
+        if profile["promotional"] or profile["evidence_kind"] in {
+            "solution_showcase", "technical_tutorial", "vendor_editorial"
+        }:
+            continue
 
         for sentence in relevant_sentences:
             if PAYMENT_EVIDENCE.search(sentence) and not PAYMENT_INTENT.search(sentence) and not PAYMENT_NEGATION.search(sentence):
