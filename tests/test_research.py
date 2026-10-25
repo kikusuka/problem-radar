@@ -481,7 +481,7 @@ def test_region_changes_the_cache_key(tmp_path):
     research.research("invoices", force=True)
     research.research("invoices", region="India", force=True)
     names = sorted(p.name for p in tmp_path.glob("*.json"))
-    assert len(names) == 2 and any("in" in n for n in names)
+    assert len(names) == 2 and names[0] != names[1]
 
 
 def test_europepmc_turns_results_into_papers_with_abstracts(monkeypatch):
