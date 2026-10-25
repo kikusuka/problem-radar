@@ -48,9 +48,9 @@ def test_coverage_reports_every_source_state():
     cov = out["coverage"]
     assert cov["hn"]["state"] == "partial"
     assert cov["se"]["state"] == "partial"
-    # Reddit community discovery has priority and uses the provider's two-request budget.
-    assert cov["reddit_community"]["state"] == "ok"
-    assert cov["reddit"]["state"] == "skipped"
+    # Direct Reddit search has priority; the two-request community adapter is opt-in.
+    assert cov["reddit"]["state"] == "failed"
+    assert "reddit_community" not in cov
     assert "bluesky" not in cov  # disabled from default research until the 403 is resolved
     assert "ddg" not in cov and "tavily" not in cov
     assert out["provider_request_units_budgeted"] <= (
@@ -599,8 +599,10 @@ def test_reddit_oauth_handshake_counts_against_the_two_request_budget(monkeypatc
     monkeypatch.setitem(S._reddit_token, "value", "cached-token")
     monkeypatch.setitem(S._reddit_token, "exp", time.time() + 1800)
     selected = research._limit_jobs(jobs)
-    assert [job.source for job in selected] == ["reddit_community"]
-    assert sum(research.SOURCE_REQUEST_COST.get(job.source, 1) for job in selected) == 2
+    # Even on a warm token, direct search gets priority; community discovery would
+    # consume both request units and displace the complaint search.
+    assert [job.source for job in selected] == ["reddit"]
+    assert sum(research.SOURCE_REQUEST_COST.get(job.source, 1) for job in selected) == 1
 
 
 def test_gitlab_is_excluded_from_default_search_without_token(monkeypatch):
@@ -1049,12 +1051,16 @@ def test_related_paper_alone_does_not_mean_partially_solved():
     assert any("do not by themselves demonstrate a working solution" in reason for reason in assessment["reasons"])
 
 
-def test_reddit_community_uses_only_one_compact_planned_job():
-    jobs = research.plan("offline AI assistant for low-end Android phones", "quick", lens="software")
-    community = [j for j in jobs if j.source == "reddit_community"]
-    assert len(community) <= 1
-    if community:
-        assert community[0].query == pain.query_variants("offline AI assistant for low-end Android phones")[0]
+def test_default_research_prefers_direct_reddit_and_community_is_opt_in():
+    niche = "offline AI assistant for low-end Android phones"
+    jobs = research.plan(niche, "quick", lens="software")
+    assert "reddit" in {j.source for j in jobs}
+    assert "reddit_community" not in {j.source for j in jobs}
+
+    explicit = research.plan(niche, "quick", sources=["reddit_community"])
+    community = [j for j in explicit if j.source == "reddit_community"]
+    assert len(community) == 1
+    assert community[0].query == pain.query_variants(niche)[0]
 
 
 def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeypatch):
@@ -1120,3 +1126,32 @@ def test_solution_check_exposes_constraint_near_misses_and_drops_generic_overlap
     assert any("Offline AI voice chat" in title for title in titles)
     assert all("Ladybird" not in title for title in titles)
     assert any("low-resource hardware" in p["missing_constraints"] for p in out["constraint_near_misses"])
+
+
+def test_promotional_launches_are_near_misses_not_pain_results():
+    promo = S.Post(
+        "reddit", "promo-launch", "Big Milestone: new Android local LLM app is live",
+        "Excited to announce this new Android app for local LLM users. It is now live to download. "
+        "Download directly from the App Store today.",
+        "https://example.com/promo", "maker", 40, 20, "2026-10-24",
+    )
+    complaint = S.Post(
+        "reddit", "real-crash", "Android local LLM keeps crashing with OOM",
+        "My Android phone's local LLM keeps crashing with an out-of-memory error. "
+        "It freezes after a prompt and it is frustrating to close other apps to free RAM.",
+        "https://example.com/complaint", "user", 3, 9, "2026-10-24",
+    )
+    ranked, misses = research._rank([promo, complaint], ["Android local LLM"])
+    assert [item[1].id for item in ranked] == ["real-crash"]
+    assert any(item[1].id == "promo-launch" for item in misses)
+
+
+def test_long_specific_query_requires_more_topic_anchors():
+    assert not pain.topic_fit(
+        "Android local LLM crashes out of memory",
+        "A local LLM service for Android devices includes memory controls.",
+    )
+    assert pain.topic_fit(
+        "Android local LLM crashes out of memory",
+        "The Android app running a local LLM crashes with an out of memory error.",
+    )
