@@ -861,7 +861,7 @@ def _diversify(ranked: list, limit: int) -> list:
     return first + rest
 
 
-def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
+def _research_compute(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
              se_sites: list[str] | None = None, force: bool = False, lens: str = "any", goal: str = "general",
              also: list[str] | None = None, region: str | None = None) -> dict:
     if not isinstance(niche, str) or not niche.strip():
@@ -877,18 +877,6 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     also = [t.strip() for t in _bounded_string_list(also, "also", max_items=4, max_item_chars=200) or []][:4]
     if any(len(term) > 200 for term in also):
         raise ValueError("each related term must be at most 200 characters")
-    cacheable = sources is None and se_sites is None and not also
-    fingerprint = hashlib.sha256(niche.casefold().encode("utf-8")).hexdigest()[:16]
-    key = f"v{CACHE_SCHEMA_VERSION}-{slug(niche)}-{fingerprint}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
-    if cacheable and not force:
-        hit = _load(key)
-        if hit:
-            hit["top_posts"] = hit["top_posts"][:limit]
-            hit["from_cache"] = True
-            hit["goal"] = goal
-            hit["analysis_guide"] = build_guide(lens, goal)
-            return hit
-
     jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
     budgeted_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
     budgeted_provider_requests = sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in budgeted_jobs)
@@ -926,7 +914,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "required_constraints": missing_constraints(niche, ""),
         "constraint_note": ("Explicit constraints are required for top-post eligibility; near misses identify constraints they do not demonstrate." if missing_constraints(niche, "") else "No supported hard constraint was detected in the query (offline/local execution, low-resource hardware, affordability, or platform)."),
         "coverage": status,
-        "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
+        "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:60]],
         "recurring_themes": themes(kept, niche),
         "suggested_groups": suggested_groups(kept, niche),
         "evidence_summary": _evidence_summary(kept),
@@ -974,9 +962,38 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                 "No qualifying complaints survived the current relevance and constraint checks. This is not evidence that the problem does not exist. "
                 "Read search_diagnostics and coverage to distinguish a genuine zero-result search from request limits or source failures; inspect near_misses and try a constraint-preserving alternate wording."
             )
-    if cacheable and kept:
-        _save(key, payload)
     return payload
+
+
+def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
+             se_sites: list[str] | None = None, force: bool = False, lens: str = "any", goal: str = "general",
+             also: list[str] | None = None, region: str | None = None) -> dict:
+    """Cache and coalesce identical research calls before spending any upstream requests."""
+    normalized_limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 25, 60))
+    normalized_lens = lens if lens in LENSES else "any"
+    normalized_goal = goal if goal in GOALS else "general"
+    key_material = {
+        "niche": niche,
+        "depth": depth,
+        "lens": normalized_lens,
+        "region": region,
+        "sources": sources,
+        "se_sites": se_sites,
+        "also": also,
+    }
+    result = cached_result(
+        "research",
+        key_material,
+        lambda: _research_compute(
+            niche, depth, 60, sources, se_sites, force=False,
+            lens=normalized_lens, goal=normalized_goal, also=also, region=region,
+        ),
+        force=force,
+    )
+    result["top_posts"] = result.get("top_posts", [])[:normalized_limit]
+    result["goal"] = normalized_goal
+    result["analysis_guide"] = build_guide(normalized_lens, normalized_goal)
+    return result
 
 
 def search(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
