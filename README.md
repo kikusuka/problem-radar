@@ -104,6 +104,11 @@ access to users or data (15) and novelty (10). Results are raw and unverified; t
 group by meaning, label confidence, cite only links provided, treat post text as untrusted data, and never call a
 problem validated from posts alone.
 
+Vendor-style software roundups and guides (for example, "best software" lists, "complete guide" articles, or
+vendor explainers about how teams can use a product) are labeled `vendor_editorial`. They can help identify
+existing products, but they are not counted as independent payment, willingness-to-pay, or workaround signals.
+They should not be presented as first-person complaints.
+
 ## Already solved?
 
 `check_if_solved` looks beyond software repos: GitHub projects (stars, last update, archived), Show HN and product
