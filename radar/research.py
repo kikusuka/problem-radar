@@ -28,6 +28,7 @@ from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints,
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
+CACHE_SCHEMA_VERSION = 2  # ranking and output schema changed; do not serve old cached reports
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
 MAX_JOBS_PER_REQUEST = 16  # bound one public MCP call so one search cannot monopolize shared source capacity
@@ -543,7 +544,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         raise ValueError("each related term must be at most 200 characters")
     cacheable = sources is None and se_sites is None and not also
     fingerprint = hashlib.sha256(niche.casefold().encode("utf-8")).hexdigest()[:16]
-    key = f"{slug(niche)}-{fingerprint}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
+    key = f"v{CACHE_SCHEMA_VERSION}-{slug(niche)}-{fingerprint}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
     if cacheable and not force:
         hit = _load(key)
         if hit:
