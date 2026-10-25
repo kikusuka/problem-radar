@@ -661,7 +661,7 @@ PAYMENT_INTENT = re.compile(
     re.I,
 )
 PAYMENT_NEGATION = re.compile(
-    r"\b(?:would not|wouldn't|will not|won't|never|cannot|can't|do not|don't)\s+(?:ever\s+)?pay\b",
+    r"\b(?:would not|wouldn't|will not|won't|never|cannot|can't|do not|don't|did not|didn't|have not|haven't|has not|hasn't|could not|couldn't|refuse to)\s+(?:ever\s+)?pay\b",
     re.I,
 )
 VALIDATION_GUIDE = (
