@@ -86,10 +86,17 @@ def plan_hunt(goal: str = "general", interests: list[str] | None = None, skills:
     chosen = _lens_from(skills, lens)
     seeds, seen = [], set()
     for i in interests or [""]:
-        for d in explore_domains(i)["domains"][:3]:
+        interest = i.strip()
+        if interest and interest.casefold() not in seen:
+            seen.add(interest.casefold())
+            seeds.append({"niche": interest, "domain": "your interest", "lens": chosen})
+        matches = explore_domains(i)
+        if interest and not matches["matched_your_interest"]:
+            continue
+        for d in matches["domains"][:3]:
             for n in d["niches"][:2]:
-                if n not in seen and (chosen == "any" or chosen in d["fits"]):
-                    seen.add(n)
+                if n.casefold() not in seen and (chosen == "any" or chosen in d["fits"]):
+                    seen.add(n.casefold())
                     seeds.append({"niche": n, "domain": d["domain"], "lens": chosen})
     seeds = seeds[:6]
     return {
@@ -133,10 +140,17 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
     lens = "research" if goal in ("research",) else _lens_from([field] + interests, "any")
     seeds, seen = [], set()
     for i in interests or [field or ""]:
-        for d in explore_domains(i)["domains"][:4]:
+        interest = i.strip()
+        if interests and interest and interest.casefold() not in seen:
+            seen.add(interest.casefold())
+            seeds.append({"niche": interest, "domain": "student: your interest"})
+        matches = explore_domains(i)
+        if interest and not matches["matched_your_interest"]:
+            continue
+        for d in matches["domains"][:4]:
             for n in d["niches"][:3]:
-                if n not in seen and (lens == "any" or lens in d["fits"]):
-                    seen.add(n)
+                if n.casefold() not in seen and (lens == "any" or lens in d["fits"]):
+                    seen.add(n.casefold())
                     seeds.append({"niche": n, "domain": d["domain"]})
     seeds = seeds[:8]
     region_hint = f", region='{location}'" if location else ""
