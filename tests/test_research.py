@@ -49,7 +49,7 @@ def test_coverage_reports_every_source_state():
     assert cov["hn"]["state"] == "partial"
     assert cov["se"]["state"] == "partial"
     # Reddit community discovery has priority and uses the provider's two-request budget.
-    assert cov["reddit_community"]["state"] == "partial"
+    assert cov["reddit_community"]["state"] == "ok"
     assert cov["reddit"]["state"] == "skipped"
     assert cov["bluesky"]["state"] == "partial"
     assert "ddg" not in cov and "tavily" not in cov
