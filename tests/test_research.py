@@ -34,19 +34,26 @@ def fakes(monkeypatch, tmp_path):
     monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result(list(SE)))
     monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([], False, "blocked or unauthorized (403)"))
     monkeypatch.setitem(S.SOURCES, "reddit_community", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "bluesky", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "arxiv", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "fda_devices", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "europepmc", lambda q, limit=20, **k: S.Result([]))
-    monkeypatch.setitem(S.SOURCES, "ddg", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S._se_cooldown, "until", 0.0)
 
 
 def test_coverage_reports_every_source_state():
     out = research.research("accounting invoices", force=True)
     cov = out["coverage"]
-    assert cov["hn"]["state"] == "ok"
-    assert cov["se"]["state"] == "partial"  # the public per-request budget intentionally limits excess source jobs
-    assert cov["reddit"]["state"] == "failed" and "403" in cov["reddit"]["errors"][0]
-    assert "web" not in cov  # no paid or limited web search; the chatting LLM uses its own
+    assert cov["hn"]["state"] == "partial"
+    assert cov["se"]["state"] == "partial"
+    # Reddit community discovery has priority and uses the provider's two-request budget.
+    assert cov["reddit_community"]["state"] == "partial"
+    assert cov["reddit"]["state"] == "skipped"
+    assert cov["bluesky"]["state"] == "partial"
+    assert "ddg" not in cov and "tavily" not in cov
+    assert out["provider_request_units_budgeted"] <= (
+        len(research.SOURCES) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
+    )
 
 
 def test_offtopic_posts_are_dropped_and_relevant_ranked():
@@ -534,116 +541,83 @@ def test_openalex_api_key_is_sent_in_request(monkeypatch):
     assert calls["params"]["api_key"] == "openalex-test-key"
 
 
-def test_tavily_requires_key_and_maps_search_results(monkeypatch):
-    monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
+def test_bluesky_search_uses_public_api_and_maps_posts(monkeypatch):
     calls = {}
 
-    class TavilyResponse:
-        status_code = 200
-
-        def json(self):
-            return {"results": [{
-                "title": "Elder care service problems",
-                "url": "https://example.org/care",
-                "content": "Families struggle to find affordable elder care.",
-                "published_date": "2026-09-12",
-                "score": 0.91,
-            }]}
-
-    def fake_post(url, **kwargs):
+    def fake_get(url, params=None, headers=None, auth=None, method="GET", data=None):
         calls["url"] = url
-        calls.update(kwargs)
-        return TavilyResponse()
+        calls["params"] = params
+        return ({"posts": [{
+            "uri": "at://did:plc:test/app.bsky.feed.post/abc123",
+            "indexedAt": "2026-10-20T12:00:00Z",
+            "record": {"text": "I hate how expensive assistive tools are", "createdAt": "2026-10-20T11:00:00Z"},
+            "author": {"handle": "user.example"},
+            "likeCount": 7,
+            "replyCount": 3,
+            "repostCount": 2,
+        }]}, "")
 
-    monkeypatch.setattr(S.httpx, "post", fake_post)
-    res = S.tavily("elder care", 50)
+    monkeypatch.setattr(S, "_get", fake_get)
+    result = S.bluesky("assistive tools", limit=100)
 
-    assert res.ok and len(res.posts) == 1
-    assert res.posts[0].source == "tavily"
-    assert res.posts[0].url == "https://example.org/care"
-    assert res.posts[0].meta["site"] == "example.org"
-    assert calls["url"] == "https://api.tavily.com/search"
-    assert calls["json"]["api_key"] == "unit-test-key"
-    assert calls["json"]["search_depth"] == "basic"
-    assert calls["json"]["max_results"] == 10
-    assert calls["json"]["include_answer"] is False
-
-
-def test_tavily_skips_without_key_and_reports_exhausted_quota(monkeypatch):
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: pytest.fail("must not call without a key"))
-    assert S.tavily("elder care").skipped
-
-    monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
-
-    class LimitedResponse:
-        status_code = 429
-
-    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: LimitedResponse())
-    res = S.tavily("elder care")
-    assert not res.ok and "credits exhausted" in res.error
+    assert result.ok and len(result.posts) == 1
+    assert calls["url"] == "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
+    assert calls["params"]["limit"] == 25
+    assert result.posts[0].source == "bluesky"
+    assert result.posts[0].url == "https://bsky.app/profile/user.example/post/abc123"
+    assert result.posts[0].score == 7 and result.posts[0].comments == 3
 
 
-def test_tavily_is_preferred_when_configured(monkeypatch):
-    monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
-    monkeypatch.delenv("ENABLE_DDG_FALLBACK", raising=False)
-    web = S.Post("tavily", "tavily-1", "Elder care problems for families",
-                 "Families struggle with elder care costs", "https://example.org/1",
-                 "", 0, 0, "", {"site": "example.org"})
-    monkeypatch.setitem(S.SOURCES, "tavily", lambda q, limit=20, **k: S.Result([web]))
-    out = research.research("elder care", force=True)
-    assert out["fallback_note"]
-    assert any(p["source"].startswith("tavily") for p in out["top_posts"])
-    assert out["coverage"]["tavily"]["state"] == "ok"
-    assert "ddg" not in out["coverage"]
-
-
-SAMPLE_DDG = (
-    '<div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fcare%3Fa%3D1&amp;rut=abc">Elder care in <b>India</b> is broken</a>'
-    '<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">Families struggle to find <b>elder care</b> services.</a></div>'
-)
-
-
-class _Resp:
-    def __init__(self, status=200, text=SAMPLE_DDG):
-        self.status_code, self.text = status, text
-
-
-def test_ddg_parses_results_and_unwraps_links(monkeypatch):
-    monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
-    monkeypatch.setenv("ENABLE_DDG_FALLBACK", "1")
-    monkeypatch.delenv("DISABLE_DDG", raising=False)
-    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: _Resp())
-    res = S.ddg("elder care india", 5)
-    assert res.ok and res.posts[0].url == "https://example.org/care?a=1" and res.posts[0].title == "Elder care in India is broken"
-    assert "struggle" in res.posts[0].text
-
-
-def test_ddg_backs_off_when_blocked_and_can_be_disabled(monkeypatch):
-    monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
-    monkeypatch.setenv("ENABLE_DDG_FALLBACK", "1")
-    monkeypatch.delenv("DISABLE_DDG", raising=False)
+def test_arxiv_parses_atom_feed_and_uses_one_request(monkeypatch):
+    monkeypatch.setattr(S, "_arxiv_last_request", 0.0)
     calls = []
-    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: (calls.append(1), _Resp(202, ""))[1])
-    first, second = S.ddg("x"), S.ddg("y")
-    assert not first.ok and not second.ok and len(calls) == 1
-    monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
-    monkeypatch.setenv("DISABLE_DDG", "1")
-    assert S.ddg("z").skipped
+
+    class ArxivResponse:
+        status_code = 200
+        text = '''<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <id>http://arxiv.org/abs/2601.12345v1</id>
+            <title>Offline Assistants for Small Devices</title>
+            <summary>We study local assistants for phones without reliable internet access.</summary>
+            <published>2026-01-10T00:00:00Z</published>
+            <author><name>Researcher One</name></author>
+          </entry>
+        </feed>'''
+
+    def fake_get(url, params=None, **kwargs):
+        calls.append((url, params, kwargs))
+        return ArxivResponse()
+
+    monkeypatch.setattr(S.httpx, "get", fake_get)
+    result = S.arxiv("offline AI assistant", limit=100)
+
+    assert result.ok and len(result.posts) == 1
+    assert len(calls) == 1
+    assert calls[0][0] == "https://export.arxiv.org/api/query"
+    assert calls[0][1]["max_results"] == 20
+    assert result.posts[0].source == "arxiv"
+    assert result.posts[0].url == "https://arxiv.org/abs/2601.12345v1"
+    assert "without reliable internet" in result.posts[0].text
 
 
-def test_ddg_is_used_only_when_results_are_thin(monkeypatch):
-    monkeypatch.setenv("ENABLE_DDG_FALLBACK", "1")
-    web = S.Post("ddg", "ddg-1", "Elder care problems for families", "Families struggle with elder care costs", "https://example.org/1", "", 0, 0, "", {"site": "example.org"})
-    monkeypatch.setitem(S.SOURCES, "ddg", lambda q, limit=20, **k: S.Result([web]))
-    thin = research.research("elder care", force=True)
-    assert thin["fallback_note"] and any(p["source"].startswith("ddg") for p in thin["top_posts"]) and thin["coverage"]["ddg"]["state"] == "ok"
-    many = [S.Post("hn", f"hn-r{i}", f"Elder care problem number {i}", f"frustrating: elder care costs thousands and is unaffordable, I wish there was a better way, case {i}", f"https://hn/{i}", f"u{i}", 5, 1, "2026-01-01") for i in range(12)]
-    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(many))
-    rich = research.research("elder care", force=True)
-    assert rich["posts_relevant"] >= 8 and "ddg" not in rich["coverage"] and "fallback_note" not in rich
-    explicit = research.research("elder care", sources=["hn"], force=True)
-    assert "ddg" not in explicit["coverage"]
+def test_arxiv_does_not_retry_rate_limit(monkeypatch):
+    monkeypatch.setattr(S, "_arxiv_last_request", 0.0)
+    calls = []
+
+    class Limited:
+        status_code = 429
+        text = "Rate exceeded"
+
+    def fake_get(*args, **kwargs):
+        calls.append(1)
+        return Limited()
+
+    monkeypatch.setattr(S.httpx, "get", fake_get)
+    result = S.arxiv("local AI")
+
+    assert not result.ok and "no retry" in result.error
+    assert len(calls) == 1
 
 
 def test_a_passing_mention_does_not_make_a_post_about_the_topic():
@@ -940,8 +914,8 @@ def test_research_reports_planned_completed_and_succeeded_jobs_separately():
     assert "queries_cancelled_before_start" in out
 
 
-# Live-test regressions: one budget for all research phases, and evidence semantics.
-def test_research_fallback_stays_inside_one_shared_job_budget(monkeypatch):
+# Regression: provider request caps are enforced without a fallback phase.
+def test_research_obeys_provider_and_global_request_budgets_without_fallback(monkeypatch):
     calls = []
 
     def fake_source(source):
@@ -950,22 +924,29 @@ def test_research_fallback_stays_inside_one_shared_job_budget(monkeypatch):
             return S.Result([])
         return run
 
+    sources = ("reddit_community", "reddit", "github", "github_repo", "hn", "se", "bluesky", "arxiv")
     monkeypatch.setattr(research, "plan", lambda *args, **kwargs: [
-        research.Job("hn", f"query-{i}") for i in range(30)
+        research.Job(source, f"{source}-{i}") for i in range(10) for source in sources
     ])
-    monkeypatch.setitem(S.SOURCES, "hn", fake_source("hn"))
-    monkeypatch.setitem(S.SOURCES, "ddg", fake_source("ddg"))
-    monkeypatch.setattr(S, "enabled", lambda: {"ddg": {"enabled": True}})
+    for source in sources:
+        monkeypatch.setitem(S.SOURCES, source, fake_source(source))
 
     out = research.research("offline assistant", force=True)
 
     assert len(calls) <= research.MAX_JOBS_PER_REQUEST
-    assert len([c for c in calls if c[0] == "hn"]) == research.MAX_JOBS_PER_REQUEST - research.MAX_FALLBACK_JOBS
-    assert len([c for c in calls if c[0] == "ddg"]) <= research.MAX_FALLBACK_JOBS
+    provider_units = {}
+    for source, _ in calls:
+        provider = research.SOURCE_PROVIDER_GROUP.get(source, source)
+        provider_units[provider] = provider_units.get(provider, 0) + research.SOURCE_REQUEST_COST.get(source, 1)
+    assert all(units <= research.MAX_REQUESTS_PER_PROVIDER_PER_CALL for units in provider_units.values())
     assert out["queries_planned"] > out["queries_budgeted"]
     assert out["queries_budgeted"] <= research.MAX_JOBS_PER_REQUEST
+    assert out["provider_request_units_budgeted"] <= (
+        len(research.SOURCE_PROVIDER_GROUP) + len(S.SOURCES)
+    ) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
     assert out["queries_run"] <= research.MAX_JOBS_PER_REQUEST
-    assert out["coverage"]["ddg"]["jobs"] == research.MAX_FALLBACK_JOBS
+    assert "fallback_note" not in out
+    assert "ddg" not in out["coverage"] and "tavily" not in out["coverage"]
 
 
 def test_validation_applies_hard_constraints_to_document_not_every_sentence(monkeypatch):
