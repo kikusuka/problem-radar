@@ -51,7 +51,7 @@ def test_coverage_reports_every_source_state():
     # Reddit community discovery has priority and uses the provider's two-request budget.
     assert cov["reddit_community"]["state"] == "ok"
     assert cov["reddit"]["state"] == "skipped"
-    assert cov["bluesky"]["state"] == "partial"
+    assert "bluesky" not in cov  # disabled from default research until the 403 is resolved
     assert "ddg" not in cov and "tavily" not in cov
     assert out["provider_request_units_budgeted"] <= (
         len(S.SOURCES) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
@@ -1047,3 +1047,68 @@ def test_related_paper_alone_does_not_mean_partially_solved():
 
     assert assessment["hint"] == "no_clear_solution_found"
     assert any("do not by themselves demonstrate a working solution" in reason for reason in assessment["reasons"])
+
+
+def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeypatch):
+    monkeypatch.setattr(S, "startup_request_cost", lambda provider: 0)
+    jobs = research.plan(
+        "offline AI assistant for low-end Android phones",
+        "quick",
+        lens="software",
+        also=["on-device LLM", "local AI inference"],
+    )
+    assert "bluesky" not in {j.source for j in jobs}
+    hn_queries = [j.query for j in jobs if j.source == "hn"]
+    assert hn_queries[0] == pain.query_variants("offline AI assistant for low-end Android phones")[0]
+    assert hn_queries[1] == "on-device LLM"
+    assert "bluesky" in {j.source for j in research.plan("offline LLM", "quick", sources=["bluesky"])}
+
+
+def test_reddit_community_adapter_is_skipped_when_oauth_cold_start_exceeds_cap(monkeypatch):
+    monkeypatch.setattr(S, "startup_request_cost", lambda provider: 1 if provider == "reddit" else 0)
+    jobs = research.plan("offline LLM", "quick", lens="software")
+    assert "reddit_community" not in {j.source for j in jobs}
+    assert "reddit" in {j.source for j in jobs}
+
+
+def test_cross_source_duplicate_titles_are_collapsed_deterministically():
+    short = P("reddit", 10, "Running a 270M LLM on Android", "Short copy", "author", score=1, comments=0)
+    rich = P("hn", 11, "Running a 270M LLM on Android", "A longer detailed discussion about small language models on low-end Android phones.", "author2", score=2, comments=5)
+    duplicate = P("reddit", 12, "Running a 270M LLM on Android", "Another repost", "author3", score=10, comments=10)
+    result = research._dedupe([short, rich, duplicate])
+    assert len(result) == 1
+    assert result[0].source == "hn"
+
+
+def test_topic_fit_rejects_generic_overlap_and_accepts_domain_aliases():
+    unrelated = "I'm forking Ladybird and stepping down as SerenityOS BDFL. A local project is running."
+    related = "A 270M language model runs entirely on a budget Android device."
+    assert not pain.topic_fit("Android app for running local LLMs", unrelated)
+    assert pain.topic_fit("Android app for running local LLMs", related)
+    assert pain.topic_fit("offline AI assistant for low-end Android phones", "offline voice chat runs local AI on an Android phone")
+    assert not pain.topic_fit("manual invoice reconciliation", "An unrelated project is running on a local server.")
+
+
+def test_technical_failure_language_counts_as_pain():
+    assert pain.looks_like_pain("The Android app keeps crashing with an out of memory (OOM) error.")
+
+
+def test_solution_check_exposes_constraint_near_misses_and_drops_generic_overlap(monkeypatch):
+    relevant_near = S.Post(
+        "hn", "hn-near", "Offline AI voice chat app for Android",
+        "An offline voice chat app runs local AI on Android phones, but it requires a newer device.",
+        "https://news.ycombinator.com/item?id=99001", "user", 3, 2, "2026-06-01",
+    )
+    unrelated = S.Post(
+        "hn", "hn-unrelated", "I'm forking Ladybird and stepping down as SerenityOS BDFL",
+        "A local project is running and a product discussion is ongoing.",
+        "https://news.ycombinator.com/item?id=99002", "user2", 5, 1, "2026-06-02",
+    )
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result([relevant_near, unrelated]))
+    monkeypatch.setitem(S.SOURCES, "github_repo", lambda q, limit=15, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "scholar", lambda q, limit=15, **k: S.Result([]))
+    out = solved.check("offline AI assistant for low-end Android phones", "software")
+    titles = [p["title"] for p in out["constraint_near_misses"]]
+    assert any("Offline AI voice chat" in title for title in titles)
+    assert all("Ladybird" not in title for title in titles)
+    assert any("low-resource hardware" in p["missing_constraints"] for p in out["constraint_near_misses"])
