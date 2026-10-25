@@ -155,3 +155,69 @@ def test_search_schedules_expansions_inside_existing_provider_budget(monkeypatch
     assert query in calls
     assert len(calls) <= research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
     assert out["search_diagnostics"]["status"] in {"coverage_limited", "no_qualifying_evidence"}
+
+
+
+def test_product_showcase_wins_over_failure_terms_in_its_description():
+    title = (
+        "HybridInfer - Android/Kotlin library for on-device LLM inference "
+        "with automatic fallback when local wedges (Apache-2.0)"
+    )
+    description = (
+        "I built this small Android library after seeing local inference crash and stall. "
+        "It switches backends when a local model stops responding."
+    )
+    profile = signal_quality.signal_profile(title + " " + description)
+    assert profile["evidence_kind"] == "solution_showcase"
+    candidate = post("reddit", "hybridinfer-full", title, description, author="maker")
+    ranked, misses = research._rank(
+        [candidate],
+        ["Android local LLM crashes out of memory"],
+        require_pain=True,
+        enforce_constraints=False,
+    )
+    assert ranked == []
+    assert any(item[1].id == "hybridinfer-full" for item in misses)
+
+
+def test_source_query_rotation_spreads_alternates_under_existing_caps(monkeypatch):
+    monkeypatch.setattr(S, "startup_request_cost", lambda provider: 0)
+    jobs = research.plan(
+        "offline AI assistant for low-end Android phones",
+        lens="software",
+        sources=["reddit", "hn", "se", "gitlab", "github"],
+        also=["local LLM", "offline voice assistant", "low RAM", "on-device AI"],
+    )
+    selected = research._limit_jobs(jobs)
+    by_source = {}
+    for job in selected:
+        by_source.setdefault(job.source, []).append(job.query)
+
+    assert len(selected) <= research.MAX_JOBS_PER_REQUEST
+    assert all(len(qs) <= research.MAX_REQUESTS_PER_PROVIDER_PER_CALL for source, qs in by_source.items()
+               if source not in {"reddit_community"})
+    # The same exact broad alternate should not consume every source's second slot.
+    alternates = [qs[1] for source, qs in by_source.items() if len(qs) > 1]
+    assert len(set(alternates)) >= 3
+    assert all(qs[0] == "offline ai assistant low-end android phones" for qs in by_source.values())
+
+
+def test_direct_search_rotates_alternate_queries_per_source(monkeypatch):
+    query = "Android local LLM crashes out of memory"
+    calls = {name: [] for name in ("reddit", "github", "hn")}
+
+    def fake(name):
+        def search(q, limit=20, **kwargs):
+            calls[name].append(q)
+            return S.Result([])
+        return search
+
+    monkeypatch.setattr(S, "startup_request_cost", lambda provider: 0)
+    for name in calls:
+        monkeypatch.setitem(S.SOURCES, name, fake(name))
+    result = research.search(query, sources=["reddit", "github", "hn"], limit=5)
+
+    assert all(query in qs for qs in calls.values())
+    second_queries = [qs[1] for qs in calls.values() if len(qs) > 1]
+    assert len(set(second_queries)) == 3
+    assert len(result["query_variants_scheduled"]) >= 4

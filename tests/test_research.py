@@ -1074,7 +1074,10 @@ def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeyp
     assert "bluesky" not in {j.source for j in jobs}
     hn_queries = [j.query for j in jobs if j.source == "hn"]
     assert hn_queries[0] == pain.query_variants("offline AI assistant for low-end Android phones")[0]
-    assert hn_queries[1] == "on-device LLM"
+    assert hn_queries[1] in pain.query_expansions("offline AI assistant for low-end Android phones")
+    # Caller-provided alternates are still retained in the plan, but constraint-preserving
+    # variants get first priority and the alternate phrases are distributed across sources.
+    assert any(j.query == "on-device LLM" for j in jobs)
     assert "bluesky" in {j.source for j in research.plan("offline LLM", "quick", sources=["bluesky"])}
 
 

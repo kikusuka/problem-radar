@@ -215,14 +215,17 @@ def signal_profile(text: str, max_matches: int = 8) -> dict:
 
     if promotional:
         evidence_kind = "product_announcement"
+    # A launch/demo-style title is stronger evidence of a solution showcase than
+    # failure vocabulary embedded later in its description (e.g. "fallback when it
+    # wedges"). Classify the artifact being presented before its feature/problem terms.
+    elif _SOLUTION_TITLE.search(text) or _SOLUTION_INTRO.search(text):
+        evidence_kind = "solution_showcase"
     elif _FAILURE_CONTEXT.search(text):
         evidence_kind = "technical_failure_report"
     elif explicit_pain:
         evidence_kind = "reported_complaint"
     elif _WORKAROUND_CONTEXT.search(text):
         evidence_kind = "workaround_or_manual_process"
-    elif _SOLUTION_TITLE.search(text) or _SOLUTION_INTRO.search(text):
-        evidence_kind = "solution_showcase"
     elif _HELP_REQUEST.search(text):
         evidence_kind = "help_request"
     elif _PRODUCT_COMPARISON.search(text):
