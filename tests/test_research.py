@@ -1,5 +1,8 @@
 import time
 import asyncio
+import os
+import subprocess
+import sys
 
 import pytest
 from radar import regions as R_
@@ -589,3 +592,92 @@ def test_old_posts_are_not_filtered_out(monkeypatch):
     monkeypatch.setattr(S, "_get", lambda *a, **k: (calls.update(a[1] or {}) or {"data": {"children": []}}, ""))
     S.reddit("wheelchair")
     assert calls.get("t") == "all"
+
+
+# Regression tests for the October 2026 audit.
+def test_blank_queries_are_rejected_before_any_source_request(monkeypatch):
+    from radar import solved
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("blank input must be rejected before searching")
+
+    monkeypatch.setattr(research, "run_jobs", forbidden)
+    monkeypatch.setattr(solved, "run_jobs", forbidden)
+    with pytest.raises(ValueError):
+        research.research(" ")
+    with pytest.raises(ValueError):
+        research.search("")
+    with pytest.raises(ValueError):
+        research.validate("\t")
+    with pytest.raises(ValueError):
+        solved.check("  ")
+
+
+def test_blank_topic_is_never_perfectly_relevant():
+    from radar import pain
+
+    assert pain.relevance("", "unrelated gaming discussion") == 0.0
+    assert not pain.is_relevant("", "unrelated gaming discussion")
+
+
+def test_cache_does_not_mix_topics_with_the_same_slug():
+    first = research.research("quickbooks/invoices", force=True)
+    second = research.research("quickbooks invoices")
+    assert first["niche"] == "quickbooks/invoices"
+    assert second["niche"] == "quickbooks invoices"
+    assert not second["from_cache"]
+
+
+def test_nyc_is_a_distinct_region_and_keeps_national_fda_data():
+    from radar import regions
+
+    nyc = regions.resolve("New York City")
+    assert nyc["code"] == "NYC"
+    assert regions.applies("nyc311", nyc)
+    assert regions.applies("fda_devices", nyc)
+    assert not regions.applies("nyc311", regions.resolve("United States"))
+
+
+def test_unrelated_post_from_topic_community_is_rejected():
+    post = P("reddit", 999, "Android game battery discussion",
+             "The game crashes and is frustrating to play.", "player", community="tight")
+    ranked, _ = research._rank([post], ["offline AI assistant for low-end Android phones"])
+    assert not ranked
+
+
+def test_unrelated_purchase_is_not_a_paying_signal(monkeypatch):
+    post = P("hn", 998, "Quickbooks invoices reconciliation is frustrating",
+             "I am tired of this. Separately, I paid $500 for a new laptop.", "writer")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([post], {}))
+    out = research.validate("quickbooks invoices reconciliation", "accounting")
+    assert out["counts"]["paying_signals"] == 0
+
+
+def test_hunt_plan_keeps_a_specific_unmapped_interest():
+    from radar import hunt
+
+    interest = "offline AI assistant for low-end Android phones"
+    result = hunt.plan_hunt(interests=[interest], skills=["python"], lens="software")
+    assert result["seed_niches"][0]["niche"] == interest
+
+
+def test_student_hunt_keeps_a_specific_project_interest():
+    from radar import hunt
+
+    interest = "offline AI assistant for low-end Android phones"
+    result = hunt.student_hunt(field="computer science", interests=[interest])
+    assert result["seed_niches"][0]["niche"] == interest
+
+
+def test_personal_json_tools_refuse_network_transport():
+    env = os.environ.copy()
+    env["ENABLE_PERSONAL"] = "1"
+    env["TRANSPORT"] = "streamable-http"
+    result = subprocess.run(
+        [sys.executable, "-c", "import server"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "local stdio use only" in result.stderr

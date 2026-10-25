@@ -163,5 +163,8 @@ if os.environ.get("ENABLE_PERSONAL") == "1":  # local use only; on a hosted serv
         return {"count": len(items), "items": items}
 
 
+if os.environ.get("ENABLE_PERSONAL") == "1" and os.environ.get("TRANSPORT", "stdio") != "stdio":
+    raise RuntimeError("ENABLE_PERSONAL is for local stdio use only; disable it for HTTP transports.")
+
 if __name__ == "__main__":
     mcp.run(transport=os.environ.get("TRANSPORT", "stdio"))

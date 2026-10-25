@@ -94,9 +94,10 @@ Claude Desktop config:
 ## Free hosting
 
 1. Push to GitHub.
-2. `.github/workflows/refresh.yml` researches the niches in `niches.txt` daily and commits `data/research/*.json`,
-   so the hosted server answers common niches instantly.
-3. Deploy the `Dockerfile` (Northflank's free Sandbox is always-on; Render's free tier sleeps when idle).
+2. Run `python refresh.py` to precompute the niches in `niches.txt` and populate the local research cache. A scheduled
+   `.github/workflows/refresh.yml` is **not currently included**; add automation only after setting a source-request budget,
+   because the free APIs have shared quotas.
+3. Deploy the `Dockerfile`. Set the optional environment variables from `.env.example` in your host's settings.
    MCP endpoint: `https://<your-app>/mcp`.
 
 Personal tools stay off on a hosted server because their files would be shared by every visitor.

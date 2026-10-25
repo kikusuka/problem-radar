@@ -27,10 +27,11 @@ REGIONS = {
     "PK": ("Pakistan", ["pakistan", "pakistani", "pk"], ["pakistan"]),
     "ID": ("Indonesia", ["indonesia", "indonesian", "id"], ["indonesia"]),
     "EU": ("European Union", ["eu", "europe", "european union"], ["europe"]),
+    "NYC": ("New York City", ["nyc", "new york city", "new york"], ["nyc", "AskNYC"]),
 }
 
 # Official-data sources and where they apply. Anything not listed here is worldwide.
-SOURCE_REGIONS = {"petitions": {"GB"}, "nyc311": {"US"}, "fda_devices": {"US"}}
+SOURCE_REGIONS = {"petitions": {"GB"}, "nyc311": {"NYC"}, "fda_devices": {"US", "NYC"}}
 SOURCE_NOTE = {"petitions": "UK Parliament petitions", "nyc311": "NYC 311 complaints", "fda_devices": "FDA device reports"}
 
 
@@ -49,7 +50,9 @@ def resolve(text: str | None) -> dict | None:
 def applies(source: str, region: dict | None) -> bool:
     """Official-data sources run only in their region. With no region they still run (worldwide default)."""
     where = SOURCE_REGIONS.get(source)
-    return not where or not region or region["code"] in where
+    if not where or not region:
+        return True
+    return region["code"] in where
 
 
 def coverage_note(region: dict | None, used: list[str]) -> str:
