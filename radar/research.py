@@ -504,7 +504,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     depth = "deep" if depth == "deep" else "quick"
     lens = lens if lens in LENSES else "any"
     goal = goal if goal in GOALS else "general"
-    limit = max(5, min(limit, 60))
+    limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 25, 60)
     also = [t.strip() for t in (also or []) if isinstance(t, str) and t.strip()][:4]
     if any(len(term) > 200 for term in also):
         raise ValueError("each related term must be at most 200 characters")
@@ -563,8 +563,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
              "missing_constraints": missing_constraints(niche, _body(p))}
             for _, p, _, _ in misses[:8]
         ]
-        payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
-                                       "for the same thing. Judge them, and retry with also=[synonyms].")
+        payload["near_misses_note"] = ("These candidates did not qualify as top results. Check missing_constraints first: some lack a hard requirement, "
+                                       "while others may use different words for the same problem. Only add synonyms that preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
     if fallback_note:
         payload["fallback_note"] = fallback_note
@@ -573,8 +573,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         payload["region_note"] = R.coverage_note(reg, list(status))
     payload["llm_web_search_suggestions"] = web_suggestions(niche, lens, reg)  # your own search tool covers shops, reviews and news
     if not kept:
-        payload["note"] = ("No relevant complaints found. See coverage for failed or skipped sources. "
-                           "Try a broader niche, depth='deep', another lens, or search_pain with your own wording.")
+        payload["note"] = ("No qualifying complaints survived the current relevance and constraint checks. This is not evidence that the problem does not exist. "
+                           "Review coverage and near_misses, try alternate wording with constraints preserved, or use search_pain.")
     if cacheable and kept:
         _save(key, payload)
     return payload
@@ -588,6 +588,7 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
     query = query.strip()
     if len(query) > MAX_QUERY_CHARS:
         raise ValueError(f"query must be at most {MAX_QUERY_CHARS} characters")
+    limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 20, 30))
     names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
     jobs = []
     for n in names:
