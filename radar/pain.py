@@ -161,7 +161,7 @@ def is_dev_niche(niche: str) -> bool:
 
 STOP_WORDS = set(
     "the and for with from into onto over under about that this these those you your our their his her its are was were "
-    "been being have has had can could should would will not but all any how what why when where who which than then also "
+    "been being have has had can could should would will not no but all any how what why when where who which than then also "
     "one two use used using via per".split()
 )
 GENERIC = {"low", "cost", "people", "person", "better", "easy", "easier", "simple", "new", "good", "best", "help", "helps",
@@ -463,6 +463,45 @@ def is_relevant(niche: str, text: str) -> bool:
         return False
     need = 1.0 if n <= 3 else 0.6
     return relevance(niche, text) >= need - 1e-9
+
+
+def _candidate_has_topic_group(group: str, candidate: str) -> bool:
+    if group.startswith("word:"):
+        return _has_word(group[5:], candidate, loose=True)
+    aliases = _TOPIC_ALIAS_GROUPS.get(group, set())
+    return any(
+        re.search(r"\\b" + r"\\s+".join(re.escape(part) for part in alias.lower().split()) + r"\\b", candidate, re.I)
+        for alias in aliases
+    )
+
+
+def topic_fit_with_alternates(query: str, alternates: list[str], text: str, title: str = "") -> bool:
+    """Use synonyms to improve recall without letting constraints become stand-alone topics.
+
+    An alternate must share a meaningful anchor with the requested topic. When the main
+    query has required core concepts (e.g. both AI model and assistant), all of those
+    concepts must still be present in the candidate. Words such as "no internet" and
+    "low RAM" are constraints, not independent topics.
+    """
+    if topic_fit(query, text, title):
+        return True
+
+    base_groups = _topic_groups(query)
+    base_keys = {key for key, _ in base_groups}
+    if not base_keys:
+        return False
+    required_core = {key for key in base_keys if key in _CORE_TOPIC_GROUPS}
+    candidate = f"{title or ''} {text or ''}".lower()
+    for alternate in alternates or []:
+        alt_groups = _topic_groups(alternate)
+        alt_keys = {key for key, _ in alt_groups}
+        if not alt_keys or not (base_keys & alt_keys):
+            continue
+        if required_core and not all(_candidate_has_topic_group(key, candidate) for key in required_core):
+            continue
+        if topic_fit(alternate, text, title):
+            return True
+    return False
 
 
 # Broad search words and user constraints are not enough to establish topical relevance.
