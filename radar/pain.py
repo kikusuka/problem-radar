@@ -555,6 +555,25 @@ _TECHNICAL_FAILURE_CUE = re.compile(
 )
 
 
+# If a query names a core domain concept, an unrelated post cannot pass using
+# platform + generic failure terms alone. These anchors describe what the problem is
+# about; platform and failure anchors provide context, not a replacement for the topic.
+_CORE_TOPIC_GROUPS = {
+    "ai_language_model",
+    "assistant",
+    "invoice",
+    "reconciliation",
+    "assistive_tech",
+}
+
+
+_AI_MODEL_SPECIFIC_CUE = re.compile(
+    r"\b(?:llms?|language models?|large language models?|small language models?|tiny language models?|"
+    r"llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\b",
+    re.I,
+)
+
+
 def topic_fit(query: str, text: str, title: str = "") -> bool:
     """Require topical anchors and retain explicit technical failure intent.
 
@@ -570,6 +589,7 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
     if _TECHNICAL_FAILURE_CUE.search(query or "") and not _TECHNICAL_FAILURE_CUE.search(candidate):
         return False
     matched = 0
+    matched_keys: set[str] = set()
     for key, anchor in groups:
         if key.startswith("word:"):
             found = _has_word(anchor, candidate, loose=True)
@@ -580,7 +600,21 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
             )
         if found:
             matched += 1
-    # Longer, more specific queries must match more than two generic/domain anchors.
-    # This prevents a post mentioning "Android + LLM" from matching a query about
-    # Android LLM crashes/out-of-memory when it never describes a failure.
+            matched_keys.add(key)
+
+    # A query for local LLM failures must actually mention an LLM/language-model
+    # concept. Android + memory/crash vocabulary alone is a different problem.
+    required_core = {key for key, _ in groups if key in _CORE_TOPIC_GROUPS}
+    if not required_core.issubset(matched_keys):
+        return False
+
+    # If the user specifically asked about an LLM/language model, generic mentions of
+    # "AI" or "Android" are not enough. Require the candidate to mention an LLM family,
+    # runtime, model format, or the phrase "language model" itself.
+    if any(key == "ai_language_model" for key, _ in groups):
+        if _AI_MODEL_SPECIFIC_CUE.search(query or "") and not _AI_MODEL_SPECIFIC_CUE.search(candidate):
+            return False
+
+    # Retain the broad overlap threshold for other query words, but don't let
+    # generic/platform/failure anchors compensate for a missing domain concept.
     return matched >= max(1, math.ceil(0.6 * len(groups)))
