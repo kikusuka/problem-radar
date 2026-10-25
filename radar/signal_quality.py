@@ -152,6 +152,17 @@ _FAILURE_CONTEXT = re.compile(
     r"(?:causes?|causing|results? in|leads? to)\b.{0,40}\b(?:lag|freez|crash|hang|out[-\s]?of[-\s]?memory|oom)\w*)\b",
     re.IGNORECASE,
 )
+_VENDOR_EDITORIAL_TITLE = re.compile(
+    r"^\s*(?:"
+    r"\d+\s+of\s+the\s+best\b.{0,160}\b(?:software|tools?|solutions?)\b|"
+    r"top\s+\d+\b.{0,160}\b(?:software|tools?|solutions?)\b|"
+    r"what(?:'s| is)\s+the\s+best\b.{0,120}\b(?:software|tools?|solutions?)\b|"
+    r"how\s+(?:[a-z][\w&'-]*\s+){0,5}(?:teams|businesses|companies|organisations|organizations)\s+can\s+use\b.{0,100}\b(?:software|automation|platform|tools?)\b|"
+    r".{0,120}\bcomplete\s+guide\b|"
+    r"benefits\s+of\b.{0,120}\b(?:software|automation|platform|tools?)\b"
+    r")",
+    re.IGNORECASE,
+)
 _TUTORIAL_TITLE = re.compile(
     r"^\s*(?:everything i learned|what i learned|lessons learned|guide to\b|"
     r"a practical guide\b|tutorial\b|walkthrough\b|deep dive into\b|"
@@ -230,6 +241,11 @@ def signal_profile(text: str, max_matches: int = 8) -> dict:
 
     if promotional:
         evidence_kind = "product_announcement"
+    # SEO/listicle-style vendor articles often contain prices, "manual vs automated",
+    # and generic how-to language. They can help discover products, but do not count as
+    # independent demand evidence.
+    elif _VENDOR_EDITORIAL_TITLE.search(text):
+        evidence_kind = "vendor_editorial"
     # Artifact type comes before technical vocabulary: tutorials often mention bugs,
     # crashes, memory errors, or lessons learned without reporting a user's complaint.
     elif _TUTORIAL_TITLE.search(text):
