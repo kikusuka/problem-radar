@@ -481,6 +481,8 @@ def _search_diagnostics(qualifying_count: int, near_miss_count: int, coverage: d
         or any(
             "shared provider request budget depleted" in str(error).lower()
             or "shared provider cooldown active" in str(error).lower()
+            or "rate limited (" in str(error).lower()
+            or "rate limit" in str(error).lower()
             for error in (st.get("errors") or [])
         )
     )
