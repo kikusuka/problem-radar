@@ -474,7 +474,7 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
     """
     groups = _topic_groups(query)
     if not groups:
-        return True
+        return False
     candidate = f"{title or ''} {text or ''}".lower()
     matched = 0
     for key, anchor in groups:
