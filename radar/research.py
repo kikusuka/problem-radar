@@ -175,7 +175,9 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
             job = pending[0]
             provider = SOURCE_PROVIDER_GROUP.get(source, source)
             cost = SOURCE_REQUEST_COST.get(source, 1)
-            used = requests_by_provider.get(provider, 0)
+            used = requests_by_provider.get(provider)
+            if used is None:
+                used = S.startup_request_cost(provider)
             if used + cost > MAX_REQUESTS_PER_PROVIDER_PER_CALL:
                 continue
             if jobs_by_provider.get(provider, 0) >= SOURCE_JOB_LIMIT.get(provider, MAX_REQUESTS_PER_PROVIDER_PER_CALL):
@@ -583,6 +585,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
     budgeted_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
     budgeted_provider_requests = sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in budgeted_jobs)
+    budgeted_providers = {SOURCE_PROVIDER_GROUP.get(j.source, j.source) for j in budgeted_jobs}
+    budgeted_provider_requests += sum(S.startup_request_cost(provider) for provider in budgeted_providers)
     raw, status = run_jobs(jobs)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
