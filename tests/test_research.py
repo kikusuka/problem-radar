@@ -669,6 +669,42 @@ def test_student_hunt_keeps_a_specific_project_interest():
     assert result["seed_niches"][0]["niche"] == interest
 
 
+
+def test_timed_out_source_job_keeps_its_global_capacity_slot(monkeypatch):
+    import threading
+    from concurrent.futures import wait
+    from threading import BoundedSemaphore
+
+    started = threading.Event()
+    release = threading.Event()
+    slots = BoundedSemaphore(1)
+    monkeypatch.setattr(research, "_SOURCE_SLOTS", slots)
+    monkeypatch.setattr(research, "DEADLINE", 0.01)
+
+    def blocked_source(query, limit=20, **kwargs):
+        started.set()
+        release.wait(timeout=2)
+        return S.Result([])
+
+    monkeypatch.setitem(S.SOURCES, "hn", blocked_source)
+    try:
+        _, first = research.run_jobs([research.Job("hn", "first")])
+        assert started.wait(timeout=1)
+        assert first["hn"]["errors"] == ["timed out"]
+
+        _, second = research.run_jobs([research.Job("hn", "second")])
+        assert second["hn"]["capacity_limited"] is True
+        assert second["hn"]["state"] == "skipped"
+    finally:
+        release.set()
+        # Ensure the worker finishes before the test restores the shared slot semaphore.
+        deadline = time.monotonic() + 1
+        while slots.acquire(blocking=False):
+            slots.release()
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+
 def test_personal_json_tools_refuse_network_transport():
     env = os.environ.copy()
     env["ENABLE_PERSONAL"] = "1"
