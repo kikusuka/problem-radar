@@ -32,13 +32,13 @@ Try: *"Use problem-radar. I'm a mechanical engineering student with 6 months for
 
 | Lens | Searches for | Sources |
 |---|---|---|
-| `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, Bluesky, GitHub, GitLab (with token) |
-| `hardware` | devices, products, DIY | Reddit, Bluesky, assistive-device reports, specialist Stack Exchange sites |
+| `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, GitHub, GitLab (with token); Bluesky is currently opt-in only |
+| `hardware` | devices, products, DIY | Reddit, assistive-device reports, specialist Stack Exchange sites; Bluesky is currently opt-in only |
 | `policy` | rules, services, civic fixes | UK Parliament petitions, NYC 311, community posts |
 | `research` | open problems, thesis topics | OpenAlex, arXiv, Europe PMC, academia and science Stack Exchange sites |
 | `any` | lets the analyst choose | general sources |
 
-Civic data covers only the UK and New York City today. Bluesky and arXiv need no key; GitLab issue search is enabled when `GITLAB_TOKEN` is set; optional keys widen
+Civic data covers only the UK and New York City today. arXiv needs no key. Bluesky is temporarily excluded from default queries after the live endpoint returned HTTP 403; pass `sources=["bluesky"]` only for explicit diagnostics. GitLab issue search is enabled when `GITLAB_TOKEN` is set; optional keys widen
 coverage (see `.env.example`). Every result includes a `coverage` block per source (`ok`, `partial`, `failed`,
 `skipped`) with the error, so nothing fails silently.
 
@@ -168,7 +168,7 @@ GitLab is excluded from default searches rather than spending budget on a reques
 https://docs.gitlab.com/api/search/ and https://docs.gitlab.com/api/rest/authentication/.
 
 
-Bluesky is searched through its public read-only AppView endpoint and requires no key. It provides a complementary,
+Bluesky's public read-only AppView adapter requires no key, but is currently opt-in because the live endpoint returned HTTP 403. Re-test it before making it a default source.
 recent social conversation stream, but it is not representative of the whole population and must not be treated as
 verified demand.
 
