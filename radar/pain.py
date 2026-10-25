@@ -595,6 +595,17 @@ _AI_MODEL_SPECIFIC_CUE = re.compile(
     r"llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\b",
     re.I,
 )
+_AI_NEGATED_CAPABILITY = re.compile(
+    r"\bno\s+(?:(?:[a-z][a-z0-9-]*)\s+){0,3}"
+    r"(?:ai|llms?|slms?|language models?|large language models?|small language models?|"
+    r"llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\s+"
+    r"(?:features?|capabilities|support|integration|inference|functionality)\b|"
+    r"\b(?:does not|doesn't|cannot|can't|won't|will not)\s+"
+    r"(?:have|support|include|offer|run|use|provide)\s+"
+    r"(?:any\s+)?(?:ai|llms?|slms?|language models?|large language models?|small language models?|"
+    r"llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\b",
+    re.I,
+)
 
 
 def topic_fit(query: str, text: str, title: str = "") -> bool:
@@ -607,6 +618,11 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
     if not groups:
         return False
     candidate = f"{title or ''} {text or ''}".lower()
+    # Explicitly negated capabilities are not positive subject evidence. This avoids
+    # matching a multilingual website saying "no model or AI features" to an AI-assistant
+    # niche just because a single paragraph also mentions chatbot/local language.
+    if any(key == "ai_language_model" for key, _ in groups) and _AI_NEGATED_CAPABILITY.search(candidate):
+        return False
     # A crash/OOM query must not match a general product announcement just because
     # it mentions Android and a language model.
     if _TECHNICAL_FAILURE_CUE.search(query or "") and not _TECHNICAL_FAILURE_CUE.search(candidate):
