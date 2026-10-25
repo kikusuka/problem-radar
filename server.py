@@ -118,8 +118,7 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     caches/rate limits are process-local, not shared between Render instances, and do not survive restarts.
     Check queries_planned, queries_budgeted, provider_request_units_budgeted, provider_request_units_used, provider_request_counts,
     provider_request_denials, queries_run, queries_succeeded, queries_timed_out, queries_cancelled_before_start, and each source's
-    coverage flags. se_sites: Stack Exchange sites.se_sites: Stack Exchange sites.
-    Cached 36h; refresh=True re-runs.
+    coverage flags. se_sites: Stack Exchange sites. Successful research is cached for 36h; empty/limited results are cached briefly.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 
@@ -137,7 +136,6 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
     enforces a per-tool-call budget of two outbound requests per upstream provider plus a process-local per-minute guard.
     Identical concurrent searches are coalesced; empty/limited results are cached briefly. Check queries_planned, queries_budgeted,
     provider_request_units_used, provider_request_counts, provider_request_denials, coverage, and treat results as leads.
-        """
     return research.search(query, sources, limit, subreddit, se_sites)
 
 
@@ -153,7 +151,6 @@ def validate_problem(problem: str, niche: str = "", lens: str = "software") -> d
     workaround_signals must refer to the target problem. scheduled_queries names the evidence intent of each admitted query;
     provider_request_units_used/counts/denials expose actual HTTP budget use. Repeated identical checks are cached briefly.
     Follow the validation guide and talk to real users.
-        """
     return research.validate(problem, niche, lens)
 
 
