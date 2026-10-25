@@ -1222,3 +1222,103 @@ def test_search_pain_filters_promotions_and_money_only_posts(monkeypatch):
     assert [p["url"] for p in out["results"]] == ["https://example.com/oom"]
     assert "offline operation" in out["results"][0]["missing_constraints"]
     assert "missing_constraints" in out["results"][0]
+
+
+def test_actual_http_budget_blocks_third_provider_request(monkeypatch):
+    S._reset_request_limits_for_tests()
+    budget = S.ProviderRequestBudget(limit_per_provider=2)
+    calls = []
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+        def raise_for_status(self):
+            return None
+
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url))
+        return Response()
+
+    monkeypatch.setattr(S.httpx, "request", fake_request)
+
+    def make_three_requests():
+        return [
+            S._get("https://api.github.com/search/issues", {"q": str(i)})
+            for i in range(3)
+        ]
+
+    results = S.invoke_with_budget(make_three_requests, budget)
+
+    assert len(calls) == 2
+    assert results[0] == ({"ok": True}, "")
+    assert results[1] == ({"ok": True}, "")
+    assert results[2][0] is None
+    assert "per-tool-call github request budget exhausted" in results[2][1]
+    assert budget.snapshot() == {"github": 2}
+
+
+def test_constraint_only_alternates_cannot_make_unrelated_result_topical():
+    query = "offline AI assistant for low-end Android phones"
+    unrelated = (
+        "The Island reports no internet connection with MediaFusion configured. "
+        "The IPv6 route on my router was broken and playback stopped."
+    )
+    assert not pain.topic_fit_with_alternates(query, ["no internet", "low RAM"], unrelated, "No internet connection")
+    relevant = (
+        "This offline local language model assistant runs on a low-end Android phone "
+        "with 3 GB RAM and continues to work when the phone has no internet connection."
+    )
+    assert pain.topic_fit_with_alternates(query, ["on-device LLM", "local AI inference"], relevant)
+
+
+def test_related_pain_evidence_is_separate_from_strict_top_posts():
+    query = "offline AI assistant for low-end Android phones"
+    candidate = P(
+        "reddit", "android-low-ram",
+        "Android AI assistant keeps crashing on budget phones",
+        "My local AI assistant on Android crashes after long prompts on my budget phone with 2 GB RAM. "
+        "It is frustrating, and the assistant stops responding when memory runs out.",
+        score=4, comments=7,
+    )
+    ranked, misses = research._rank([candidate], [query])
+    supporting = research._supporting_evidence(query, [], misses)
+    assert ranked == []
+    assert len(supporting) == 1
+    assert "offline operation" in supporting[0]["missing_constraints"]
+    assert supporting[0]["url"] == candidate.url
+
+
+def test_validation_budget_prioritizes_distinct_evidence_intents():
+    out = research.validate("quickbooks invoices reconciliation", "accounting")
+    intents = {item["purpose"] for item in out["scheduled_queries"]}
+    assert {"existing_solutions", "willingness_to_pay", "workaround"} <= intents
+    assert out["queries_budgeted"] <= research.MAX_JOBS_PER_REQUEST
+    assert out["provider_request_units_used"] <= out["provider_request_units_budgeted"]
+
+
+def test_identical_concurrent_tool_calls_are_coalesced():
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    calls = []
+    lock = threading.Lock()
+
+    def compute():
+        with lock:
+            calls.append(1)
+        time.sleep(0.05)
+        return {"value": "one shared result", "evidence_status": "limited_evidence", "coverage": {"hn": {"ok": 1}}}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [
+            pool.submit(research.cached_result, "singleflight-regression", {"case": "same-topic"}, compute)
+            for _ in range(8)
+        ]
+        results = [future.result(timeout=3) for future in futures]
+
+    assert len(calls) == 1
+    assert all(result["value"] == "one shared result" for result in results)
+    assert sum(bool(result["from_cache"]) for result in results) == 7
