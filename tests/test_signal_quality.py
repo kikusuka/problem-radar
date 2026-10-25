@@ -46,3 +46,20 @@ def test_compact_research_results_include_traceable_signal_annotations():
     assert "signal_evidence" in compact
     assert compact["signal_evidence"]["counts"]["pain_point"] >= 1
     assert compact["signal_evidence"]["self_promotional"] is False
+
+
+def test_launch_announcements_without_i_built_are_flagged_as_promotional():
+    profile = signal_quality.signal_profile(
+        "Big Milestone! Excited to announce our app is live and available to download. "
+        "Download directly from the App Store today."
+    )
+    assert profile["promotional"] is True
+
+
+def test_non_promotional_first_person_technical_complaint_stays_independent():
+    profile = signal_quality.signal_profile(
+        "My Android local model keeps crashing with an out-of-memory error. "
+        "This is frustrating and freezes after every prompt."
+    )
+    assert profile["promotional"] is False
+    assert profile["counts"]["pain_point"] >= 1
