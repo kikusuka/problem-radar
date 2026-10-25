@@ -508,6 +508,32 @@ def test_multiword_topics_must_appear_close_together():
     assert relevance("elder care", "Care is hard. " + "word " * 30 + "my elder brother") < 1.0
 
 
+def test_openalex_api_key_is_sent_in_request(monkeypatch):
+    monkeypatch.setenv("OPENALEX_API_KEY", "openalex-test-key")
+    calls = {}
+
+    class OpenAlexResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"results": []}
+
+    def fake_request(method, url, **kwargs):
+        calls["method"] = method
+        calls["url"] = url
+        calls.update(kwargs)
+        return OpenAlexResponse()
+
+    monkeypatch.setattr(S.httpx, "request", fake_request)
+    result = S.scholar("offline android assistant")
+    assert result.ok and result.posts == []
+    assert calls["url"] == "https://api.openalex.org/works"
+    assert calls["params"]["api_key"] == "openalex-test-key"
+
+
 def test_tavily_requires_key_and_maps_search_results(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
     calls = {}
