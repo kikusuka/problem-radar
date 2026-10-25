@@ -586,7 +586,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "posts_relevant": len(kept),
         "searched_terms": [niche] + also,
         "required_constraints": missing_constraints(niche, ""),
-        "constraint_note": ("Explicit constraints are required for top-post eligibility; near misses identify constraints they do not demonstrate." if missing_constraints(niche, "") else "No hard platform, offline, or low-resource constraint was detected in the query."),
+        "constraint_note": ("Explicit constraints are required for top-post eligibility; near misses identify constraints they do not demonstrate." if missing_constraints(niche, "") else "No supported hard constraint was detected in the query (offline/local execution, low-resource hardware, affordability, or platform)."),
         "coverage": status,
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
         "recurring_themes": themes(kept, niche),
