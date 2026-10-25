@@ -231,16 +231,17 @@ def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
             follow_redirects=False,  # API adapters are budgeted as one outbound HTTP request
         )
         if r.status_code in (403, 429):
-            remaining = (r.headers.get("X-RateLimit-Remaining") or "").strip()
-            body = (r.text or "").lower()[:1200]
+            response_headers = getattr(r, "headers", {}) or {}
+            remaining = (response_headers.get("X-RateLimit-Remaining") or "").strip()
+            body = (getattr(r, "text", "") or "").lower()[:1200]
             rate_limited = (
                 r.status_code == 429
-                or bool(r.headers.get("Retry-After"))
+                or bool(response_headers.get("Retry-After"))
                 or remaining == "0"
                 or any(term in body for term in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "daily limit"))
             )
             if rate_limited:
-                _cooldown_provider(url, _cooldown_delay(url, r.headers))
+                _cooldown_provider(url, _cooldown_delay(url, response_headers))
                 return None, f"rate limited ({r.status_code}); provider cooldown applied, no retry attempted"
         if r.status_code in (401, 403):
             return None, f"blocked or unauthorized ({r.status_code})"
