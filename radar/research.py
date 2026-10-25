@@ -23,7 +23,7 @@ from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
 from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, query_variants, relevance,
-                   signals)
+                   signals, topic_fit)
 from .signal_quality import signal_profile
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -87,11 +87,11 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit", "gitlab"], "se": None},
-    "any": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit", "gitlab"], "se": None},
-    "hardware": {"sources": ["reddit_community", "fda_devices", "se", "bluesky", "reddit", "hn"],
+    "software": {"sources": ["reddit_community", "hn", "se", "reddit", "gitlab"], "se": None},
+    "any": {"sources": ["reddit_community", "hn", "se", "reddit", "gitlab"], "se": None},
+    "hardware": {"sources": ["reddit_community", "fda_devices", "se", "reddit", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
-    "policy": {"sources": ["petitions", "nyc311", "reddit_community", "bluesky", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
+    "policy": {"sources": ["petitions", "nyc311", "reddit_community", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
     "research": {"sources": ["scholar", "arxiv", "europepmc", "se", "hn", "reddit_community", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
 }
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
@@ -194,7 +194,7 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
 
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
          lens: str = "any", also: list[str] | None = None, region: dict | None = None) -> list[Job]:
-    """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
+    """Plan compact topic and synonym queries first; generic modifiers are lower priority under tight provider caps."""
     sources = _bounded_string_list(sources, "sources")
     se_sites = _bounded_string_list(se_sites, "se_sites")
     lens = lens if lens in LENSES else "any"
@@ -208,8 +208,20 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     if not sources:  # explicit source choices are honoured; defaults skip unavailable optional sources and non-applicable official data
         available = S.enabled()
         names = [s for s in names if R.applies(s, region) and available.get(s, {}).get("enabled", True)]
-    queries = [niche] + [f"{niche} {m}" for m in mods]
-    extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # synonyms supplied by the analyst
+        # Reddit community discovery costs two data requests. On a cold OAuth session,
+        # the token exchange is a third request, so skip this adapter rather than report
+        # a predictable budget skip; regular Reddit search can still use the budget.
+        if "reddit_community" in names and (
+            S.startup_request_cost("reddit") + SOURCE_REQUEST_COST.get("reddit_community", 1)
+            > MAX_REQUESTS_PER_PROVIDER_PER_CALL
+        ):
+            names.remove("reddit_community")
+    extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # analyst-supplied alternate wording
+    compact = query_variants(niche)
+    # Use a short constraint-preserving query first, then the user's own synonyms,
+    # then a compact alternative and finally generic modifiers. Under the 1–2 request
+    # cap, this makes selected calls meaningfully different instead of "niche problem".
+    queries = list(dict.fromkeys([compact[0]] + extra + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
     jobs: list[Job] = []
     for name in names:
         if name == "se":
@@ -219,17 +231,19 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
                 for q in queries[: 3 if deep else 2] + extra[:1]:
                     jobs.append(Job("se", q, {"site": site}, per))
         elif name == "github":
-            jobs += [Job("github", q, {}, per) for q in queries[:3] + extra[:1]]
+            jobs += [Job("github", q, {}, per) for q in queries[:3]]
         elif name in PAPERS:
-            jobs += [Job(name, q, {}, per) for q in queries[: 5 if deep else 4] + extra[:2]]
+            jobs += [Job(name, q, {}, per) for q in queries[: 5 if deep else 4]]
         elif name == "reddit_community":
-            jobs += [Job("reddit_community", q, {}, per) for q in dict.fromkeys([niche] + extra[:2])]
+            # One Reddit community job uses the provider's full two-request budget.
+            # Use the compact primary query and avoid creating unselectable duplicate jobs.
+            jobs.append(Job("reddit_community", queries[0], {}, per))
         elif name == "fda_devices":  # generic device names: use the niche and the analyst's synonyms ("hearing aid", "wheelchair")
             jobs += [Job("fda_devices", q, {}, per) for q in dict.fromkeys([niche] + extra[:3])]
         elif name in STRUCTURED:
             jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
         else:  # hn, reddit
-            jobs += [Job(name, q, {}, per) for q in queries + extra]
+            jobs += [Job(name, q, {}, per) for q in queries]
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
     if region:  # bias toward the place: its own communities, and its name in the query
         if "reddit" in names:
@@ -317,13 +331,19 @@ def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post]
 
 
 def _dedupe(posts: list[S.Post]) -> list[S.Post]:
+    """Deduplicate repeated IDs and cross-platform reposts deterministically."""
+    def quality(post: S.Post):
+        body = _body(post)
+        return (-len(body), -(post.score + 2 * post.comments), post.source, post.id)
+
     seen_id, seen_title, out = set(), set(), []
-    for p in posts:
-        key = re.sub(r"\W+", "", p.title.lower())[:80]
-        if p.id in seen_id or (key and key in seen_title and p.source != "hn"):
+    for p in sorted(posts, key=quality):
+        key = re.sub(r"\W+", "", p.title.lower())[:120]
+        if p.id in seen_id or (key and key in seen_title):
             continue
         seen_id.add(p.id)
-        seen_title.add(key)
+        if key:
+            seen_title.add(key)
         out.append(p)
     return out
 
@@ -507,7 +527,11 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         rel = _rel(terms, text)
         community = p.meta.get("community")
         topic_terms = [t for t in terms if t and t.strip()]
-        topic_match = any(is_relevant(t, text) for t in topic_terms)
+        # Top results must directly match the topic, not just one loose word.
+        # Synonym-aware anchors are used to surface near-misses, not to bypass this gate.
+        topic_match = any(is_relevant(t, text) and topic_fit(t, text, p.title) for t in topic_terms)
+        # A post in a discovered adjacent community may use one familiar term ("hearing")
+        # rather than the full phrase ("hearing aids"); keep that separate from general search.
         community_match = any(relevance(t, text, loose=True) >= 0.5 for t in topic_terms)
         # For very short topics, a matching community name can supply context that the post omits.
         community_name_match = (
@@ -541,7 +565,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         score = heat(text, p.score, p.comments) + signal_bonus + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
         about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
         if not about or not topic_match:
-            if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):
+            if (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)) and any(topic_fit(t, text, p.title) for t in topic_terms):
                 misses.append((score, p, rel, text))
             continue
         ranked.append((score, p, rel, text))

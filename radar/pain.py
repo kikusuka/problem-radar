@@ -100,7 +100,9 @@ HACK_WORDS = re.compile(
 )
 PAIN_WORDS = re.compile(
     r"\b(tired of|waste|wasting|hours|painful|annoying|frustrating|nightmare|tedious|hate|broken|unusable|"
-    r"unsafe|dangerous|unaffordable|too expensive|inaccessible|stuck|ignored|unfair)\b",
+    r"unsafe|dangerous|unaffordable|too expensive|inaccessible|stuck|ignored|unfair|"
+    r"crash(?:es|ed|ing)?|out of memory|oom|out-of-memory|fails? to load|runs? out of memory|"
+    r"not enough ram|laggy|battery drain|memory leak|freezes?)\b",
     re.I,
 )
 INTENT_WORDS = re.compile(
@@ -389,3 +391,104 @@ def is_relevant(niche: str, text: str) -> bool:
         return False
     need = 1.0 if n <= 3 else 0.6
     return relevance(niche, text) >= need - 1e-9
+
+
+# Broad search words and user constraints are not enough to establish topical relevance.
+# Anchor groups let known domain vocabulary match common equivalents without letting
+# generic words ("app", "running", "project") make an unrelated result look relevant.
+_TOPIC_GENERIC = {
+    "app", "apps", "tool", "tools", "software", "product", "products", "solution",
+    "solutions", "problem", "problems", "issue", "issues", "project", "projects",
+    "system", "systems", "service", "services", "platform", "platforms", "implementation",
+    "implementations", "build", "built", "building", "create", "created", "creating",
+    "running", "run", "use", "uses", "used", "using", "need", "needs", "needed",
+    "small", "large", "big", "best", "better", "good", "free", "alternative", "alternatives",
+    "business", "businesses", "people", "person", "users", "user", "work", "working",
+    "open", "source", "based", "support", "supports", "supported",
+}
+_TOPIC_CONSTRAINT_WORDS = {
+    "offline", "online", "internet", "network", "air-gapped", "airgapped",
+    "local", "on-device", "device", "fully", "cloud", "remote", "server-only",
+    "low-end", "low-ram", "low-memory", "low-resource", "low-cost", "low-spec",
+    "entry-level", "limited", "affordable", "cheap", "budget", "privacy-first",
+    "private", "privacy", "device", "devices", "android", "ios", "iphone", "ipad", "windows",
+    "linux", "macos", "chromeos", "no-internet", "no-network",
+}
+_TOPIC_ALIAS_GROUPS = {
+    "ai_language_model": {
+        "ai", "llm", "llms", "slm", "language model", "language models",
+        "large language model", "large language models", "small language model",
+        "small language models", "tiny language model", "tiny language models",
+        "local inference", "llama.cpp", "ollama", "gguf", "qwen", "mistral", "gemma",
+    },
+    "assistant": {
+        "assistant", "assistants", "chatbot", "chatbots", "chat bot", "chat bots",
+        "voice assistant", "personal assistant", "conversational assistant",
+        "conversational agent", "voice chat", "chat interface",
+    },
+    "phone": {
+        "phone", "phones", "smartphone", "smartphones", "handset", "handsets",
+        "mobile device", "mobile devices", "android device", "android devices", "android",
+    },
+    "invoice": {"invoice", "invoices", "invoicing", "billing", "accounts receivable"},
+    "reconciliation": {"reconciliation", "reconcile", "reconciling", "matching", "bookkeeping", "accounting"},
+    "assistive_tech": {
+        "assistive", "assistive device", "assistive devices", "wheelchair", "wheelchairs",
+        "mobility aid", "mobility aids", "power assist", "accessibility aid", "accessibility aids",
+    },
+}
+_TOPIC_ALIAS_INDEX = {}
+for _group, _aliases in _TOPIC_ALIAS_GROUPS.items():
+    for _alias in _aliases:
+        _TOPIC_ALIAS_INDEX[_alias] = _group
+        # Query wording often gives only one word of a known phrase ("language model").
+        # Map non-generic component words to the same anchor group as the full alias.
+        if " " in _alias:
+            for _part in _alias.split():
+                _TOPIC_ALIAS_INDEX.setdefault(_part, _group)
+
+
+def _topic_groups(query: str) -> list[tuple[str, str]]:
+    """Return distinct topic anchors while stripping generic and constraint-only terms."""
+    tokens = re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", (query or "").lower())
+    groups: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for index, token in enumerate(tokens):
+        if token in STOP_WORDS or token in _TOPIC_GENERIC or token in _TOPIC_CONSTRAINT_WORDS:
+            continue
+        if token in {"ram", "memory", "resources", "resource"} and index:
+            if tokens[index - 1] in {"low", "limited", "low-ram", "low-memory", "low-resource"}:
+                continue
+        if token in {"low", "limited"} and index + 1 < len(tokens) and tokens[index + 1] in {"ram", "memory", "resource", "resources", "end", "spec"}:
+            continue
+        group = _TOPIC_ALIAS_INDEX.get(token)
+        key = group or "word:" + token
+        if key not in seen:
+            groups.append((key, group or token))
+            seen.add(key)
+    return groups
+
+
+def topic_fit(query: str, text: str, title: str = "") -> bool:
+    """Require one or two topical anchors, not just loose overlap on generic words.
+
+    Hard constraints are checked separately by constraints_match(). Known equivalents
+    (e.g. LLM/language model, assistant/chatbot, phone/mobile device) count as one
+    anchor group. This deliberately favors precision when classifying solutions.
+    """
+    groups = _topic_groups(query)
+    if not groups:
+        return False
+    candidate = f"{title or ''} {text or ''}".lower()
+    matched = 0
+    for key, anchor in groups:
+        if key.startswith("word:"):
+            found = _has_word(anchor, candidate, loose=True)
+        else:
+            found = any(
+                re.search(r"\b" + r"\s+".join(re.escape(part) for part in alias.lower().split()) + r"\b", candidate, re.I)
+                for alias in _TOPIC_ALIAS_GROUPS[key]
+            )
+        if found:
+            matched += 1
+    return matched >= min(2, len(groups))
