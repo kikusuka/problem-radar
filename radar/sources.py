@@ -6,6 +6,7 @@ Sources (free public access or free tiers; quotas and access policies still appl
   reddit     Reddit                          OAuth credentials recommended; review current API terms
   bluesky    Bluesky public posts            no key; public API
   github     GitHub issues and repositories  optional GITHUB_TOKEN
+  gitlab     GitLab public issue search      optional free GITLAB_TOKEN
   scholar    OpenAlex papers                 optional free OPENALEX_API_KEY
   arxiv      CS/AI and other preprints       no key; 3-second shared request spacing
   europepmc  Biomedical papers and preprints no key
@@ -382,6 +383,46 @@ def arxiv(query: str, limit: int = 20, **_) -> Result:
     return Result(out)
 
 
+# ---------------------------------------------------------------------- GitLab
+def gitlab(query: str, limit: int = 20, **_) -> Result:
+    """Search GitLab.com issues. Requires a free read_api token; one HTTP request per query."""
+    token = os.environ.get("GITLAB_TOKEN", "").strip()
+    if not token:
+        return Result([], True, "skipped (GITLAB_TOKEN is not configured)", skipped=True)
+
+    data, err = _get(
+        "https://gitlab.com/api/v4/search",
+        {"scope": "issues", "search": query, "per_page": max(1, min(int(limit), 20))},
+        {"PRIVATE-TOKEN": token},
+    )
+    if data is None:
+        return Result([], False, err)
+    if not isinstance(data, list):
+        return Result([], False, "unexpected GitLab search response")
+
+    from urllib.parse import urlparse
+    out = []
+    for issue in data:
+        url = (issue.get("web_url") or "").strip()
+        if not url.startswith("https://gitlab.com/"):
+            continue
+        title = _plain(issue.get("title") or "")
+        description = _plain(issue.get("description") or "")
+        if not (title or description):
+            continue
+        path_parts = [part for part in urlparse(url).path.split("/") if part]
+        project_path = "/".join(path_parts[:path_parts.index("-")]) if "-" in path_parts else ""
+        author = (issue.get("author") or {}).get("username") or ""
+        created = str(issue.get("created_at") or "")[:10]
+        score = int(issue.get("upvotes") or 0) - int(issue.get("downvotes") or 0)
+        out.append(Post(
+            "gitlab", f"gl-{issue.get('id') or url}", title, description[:1500], url, author,
+            score, int(issue.get("user_notes_count") or 0), created,
+            {"site": project_path, "state": issue.get("state") or ""},
+        ))
+    return Result(out)
+
+
 # --------------------------------------------------------------------- GitHub
 def github(query: str, limit: int = 20, **_) -> Result:
     headers = {"Accept": "application/vnd.github+json"}
@@ -515,7 +556,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "bluesky": bluesky, "fda_devices": fda_devices, "europepmc": europepmc, "arxiv": arxiv, "github": github,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "bluesky": bluesky, "fda_devices": fda_devices, "europepmc": europepmc, "arxiv": arxiv, "gitlab": gitlab, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -532,6 +573,7 @@ def enabled() -> dict:
         "reddit": {"enabled": True, "note": reddit_mode},
         "bluesky": {"enabled": True, "note": "public post search; no API key; request budget capped per provider"},
         "arxiv": {"enabled": True, "note": "scholarly preprint search; no API key; enforces at least 3 seconds between requests"},
+        "gitlab": {"enabled": bool(os.environ.get("GITLAB_TOKEN", "").strip()), "note": ("authenticated public issue search; token configured" if os.environ.get("GITLAB_TOKEN", "").strip() else "optional; set GITLAB_TOKEN with read_api scope to search public issues; no keyless global search")},
         "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},
