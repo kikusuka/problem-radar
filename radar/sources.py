@@ -40,25 +40,36 @@ TAGS = re.compile(r"<[^>]+>")
 _REQUEST_BUDGET_LOCK = Lock()
 _REQUEST_BURST = 2.0
 _REQUEST_BUCKETS: dict[str, dict[str, float]] = {}
+# Providers with a small unmetered quota receive only one initial token; with an
+# explicit free credential, the burst can rise to two. Refill intervals also respect
+# their documented daily/search limits, not only their per-second limits.
+_REQUEST_PROVIDER_BURSTS = {
+    "github": 2.0 if os.environ.get("GITHUB_TOKEN", "").strip() else 1.0,
+    "stackexchange": 2.0 if os.environ.get("STACKEXCHANGE_KEY", "").strip() else 1.0,
+    "openalex": 2.0 if os.environ.get("OPENALEX_API_KEY", "").strip() else 1.0,
+    "openfda": 2.0 if os.environ.get("OPENFDA_KEY", "").strip() else 1.0,
+    "nyc311": 2.0 if os.environ.get("NYC311_APP_TOKEN", "").strip() else 1.0,
+}
 _REQUEST_INTERVALS = {
-    # GitHub Search is stricter than its primary REST quota: stay below 30/min
-    # authenticated and 10/min unauthenticated, including the initial two-call burst.
-    "github": 2.2 if os.environ.get("GITHUB_TOKEN", "").strip() else 7.5,
+    # GitHub Search is stricter than the primary REST quota: stay below 30/min
+    # authenticated and 10/min unauthenticated, while unauthenticated core requests
+    # also remain below the 60/hour primary limit.
+    "github": 2.2 if os.environ.get("GITHUB_TOKEN", "").strip() else 63.0,
     "reddit": 2.0,
     # Conservative daily-budget refill. A free Stack Exchange key allows about
-    # 10,000 requests/day; without one, keep the shared hosted IP much lower.
+    # 10,000 requests/day; keyless traffic gets a much smaller shared-host budget.
     "stackexchange": 9.0 if os.environ.get("STACKEXCHANGE_KEY", "").strip() else 290.0,
     "gitlab": 2.0,
     "hn": 2.0,
-    # OpenAlex full-text search is metered against the free daily budget (about
-    # 1,000 searches with a free key, 100 keyless). Do not pace it at 1 req/sec.
+    # OpenAlex keyword search costs usage credits: free key gives about 1,000 searches/day,
+    # keyless about 100/day. Keep each process well under either budget.
     "openalex": 150.0 if os.environ.get("OPENALEX_API_KEY", "").strip() else 900.0,
     "europepmc": 1.0,
     "bluesky": 1.0,
-    # openFDA allows 1,000 requests/day without a key and 120,000/day with one.
+    # openFDA gives 1,000 requests/day without a key, 120,000/day with one.
     "openfda": 1.0 if os.environ.get("OPENFDA_KEY", "").strip() else 100.0,
     "petitions": 1.0,
-    "nyc311": 1.0,
+    "nyc311": 4.0 if os.environ.get("NYC311_APP_TOKEN", "").strip() else 60.0,
 }
 
 
@@ -89,10 +100,14 @@ def _provider_for_url(url: str) -> str:
     return host or "unknown"
 
 
+def _provider_burst(provider: str) -> float:
+    return _REQUEST_PROVIDER_BURSTS.get(provider, _REQUEST_BURST)
+
+
 def _bucket(provider: str, now: float) -> dict[str, float]:
     state = _REQUEST_BUCKETS.get(provider)
     if state is None:
-        state = {"tokens": _REQUEST_BURST, "updated": now, "blocked_until": 0.0}
+        state = {"tokens": _provider_burst(provider), "updated": now, "blocked_until": 0.0}
         _REQUEST_BUCKETS[provider] = state
     return state
 
@@ -107,7 +122,7 @@ def _take_request_budget(url: str) -> str:
         if now < state["blocked_until"]:
             return f"shared provider cooldown active for {provider}; no upstream request sent"
         elapsed = max(0.0, now - state["updated"])
-        state["tokens"] = min(_REQUEST_BURST, state["tokens"] + elapsed / interval)
+        state["tokens"] = min(_provider_burst(provider), state["tokens"] + elapsed / interval)
         state["updated"] = now
         if state["tokens"] < 1.0:
             return f"shared provider request budget depleted for {provider}; no upstream request sent"
@@ -165,17 +180,18 @@ def request_limiter_status() -> dict:
         for provider, state in sorted(_REQUEST_BUCKETS.items()):
             interval = _REQUEST_INTERVALS.get(provider, 1.0)
             elapsed = max(0.0, now - state["updated"])
-            tokens = min(_REQUEST_BURST, state["tokens"] + elapsed / interval)
+            tokens = min(_provider_burst(provider), state["tokens"] + elapsed / interval)
             cooldown = max(0.0, state["blocked_until"] - now)
             providers[provider] = {
                 "available_tokens_approx": round(tokens, 2),
+                "burst_limit": int(_provider_burst(provider)),
                 "refill_interval_seconds": interval,
                 "cooldown_seconds": int(cooldown + 0.999),
                 "blocked": cooldown > 0,
             }
     return {
         "scope": "current process only; resets on restart",
-        "burst_requests_per_provider": int(_REQUEST_BURST),
+        "maximum_burst_requests_per_provider": int(_REQUEST_BURST),
         "policy": "non-blocking; no automatic retry; provider 429 applies cooldown",
         "providers": providers,
     }
