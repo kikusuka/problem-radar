@@ -266,8 +266,8 @@ def test_local_llm_query_rejects_android_memory_bug_without_llm_evidence():
         "freezing, and white-screen crashes on iOS and Android devices."
     )
     unrelated_model = (
-        "Model packaging and resource constraints cause Android app crashes and memory errors, "
-        "but this report does not mention LLMs, language models, local inference, or model runtimes."
+        "Packaging compiled assets and application resources causes Android app crashes and "
+        "memory errors after installation. The report focuses on app packaging, not inference."
     )
     real_topic = (
         "The Android app running a local LLM crashes with an out-of-memory error after longer prompts."
