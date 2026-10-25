@@ -30,6 +30,7 @@ SE = [
 def fakes(monkeypatch, tmp_path):
     monkeypatch.setattr(research, "RESEARCH_DIR", tmp_path)
     research._mem.clear()
+    S._REQUEST_BUCKETS.clear()
     monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(list(HN)))
     monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result(list(SE)))
     monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([], False, "blocked or unauthorized (403)"))
@@ -1096,10 +1097,108 @@ def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeyp
     hn_queries = [j.query for j in jobs if j.source == "hn"]
     assert hn_queries[0] == pain.query_variants("offline AI assistant for low-end Android phones")[0]
     assert hn_queries[1] in pain.query_expansions("offline AI assistant for low-end Android phones")
-    # Caller-provided alternates are still retained in the plan, but constraint-preserving
-    # variants get first priority and the alternate phrases are distributed across sources.
-    assert any(j.query == "on-device LLM" for j in jobs)
+    # Caller-provided alternates are combined with the subject and hard requirements.
+    # They must never become standalone searches that waste the small provider budget.
+    assert all(j.query.casefold() not in {"on-device llm", "local ai inference"} for j in jobs)
+    assert any(
+        "on-device llm" in j.query.casefold()
+        and "android" in j.query.casefold()
+        and ("offline" in j.query.casefold() or "without internet" in j.query.casefold())
+        and "low-end" in j.query.casefold()
+        for j in jobs
+    )
     assert "bluesky" in {j.source for j in research.plan("offline LLM", "quick", sources=["bluesky"])}
+
+
+def test_topic_anchor_index_does_not_promote_partial_phrases_to_ai(monkeypatch):
+    local_language_groups = pain._topic_groups("local language")
+    language_model_groups = pain._topic_groups("language model")
+    assert all(group != "ai_language_model" for group, _ in local_language_groups)
+    assert any(group == "ai_language_model" for group, _ in language_model_groups)
+    assert not pain.topic_fit(
+        "offline AI assistant on Android using a local language",
+        "A website supports local language switching but has no AI assistant.",
+    )
+
+
+def test_solution_search_finds_topical_projects_as_constraint_near_misses(monkeypatch):
+    problem = (
+        "A genuinely offline AI assistant that runs on low-end Android phones "
+        "with limited RAM and storage, without paid APIs or internet access"
+    )
+    candidate = S.Post(
+        "github_repo", "ghr-pocketpal", "PocketPal AI — Run local LLMs on Android",
+        "Run language models locally on Android devices using GGUF models and llama.cpp.",
+        "https://github.com/a-gh-user/pocketpal-ai", "maker", 850, 40, "2026-09-20",
+        {"site": "Kotlin", "archived": False},
+    )
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "github_repo", lambda q, limit=15, **k: S.Result([candidate]))
+    monkeypatch.setitem(S.SOURCES, "scholar", lambda q, limit=15, **k: S.Result([]))
+
+    out = solved.check(problem, "software")
+
+    assert out["solution_search_queries"][0].lower().startswith("android")
+    assert any("local llm" in q.lower() for q in out["solution_search_queries"])
+    assert out["existing_projects"] == []
+    assert any(
+        item["url"] == candidate.url
+        and "offline operation" in item["missing_constraints"]
+        and "low-resource hardware" in item["missing_constraints"]
+        for item in out["constraint_near_misses"]
+    )
+    assert out["assessment"]["hint"] == "inconclusive_constraints_not_matched"
+
+
+def test_shared_provider_budget_blocks_bursts_without_sleeping(monkeypatch):
+    monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
+    monkeypatch.setattr(S.time, "monotonic", lambda: clock[0])
+    monkeypatch.setitem(S._REQUEST_INTERVALS, "github", 2.0)
+    clock = [100.0]
+
+    assert S._take_request_budget("https://api.github.com/search/issues") == ""
+    assert S._take_request_budget("https://api.github.com/search/repositories") == ""
+    assert "budget depleted" in S._take_request_budget("https://api.github.com/search/issues")
+
+    clock[0] += 2.0
+    assert S._take_request_budget("https://api.github.com/search/issues") == ""
+    S._cooldown_provider("https://api.github.com/search/issues", "5")
+    assert "cooldown active" in S._take_request_budget("https://api.github.com/search/issues")
+    clock[0] += 5.0
+    assert S._take_request_budget("https://api.github.com/search/issues") == ""
+
+
+def test_get_does_not_send_http_after_shared_budget_is_exhausted(monkeypatch):
+    monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
+    clock = [50.0]
+    monkeypatch.setattr(S.time, "monotonic", lambda: clock[0])
+    monkeypatch.setitem(S._REQUEST_INTERVALS, "github", 100.0)
+    assert S._take_request_budget("https://api.github.com/search/issues") == ""
+    assert S._take_request_budget("https://api.github.com/search/issues") == ""
+    calls = []
+    monkeypatch.setattr(S.httpx, "request", lambda *a, **k: calls.append(a) or pytest.fail("HTTP must not be sent"))
+    data, error = S._get("https://api.github.com/search/issues", {"q": "test"})
+    assert data is None and "shared provider request budget depleted" in error
+    assert calls == []
+
+
+def test_configured_reddit_oauth_failure_does_not_fall_back_to_anonymous(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "client-id")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "client-secret")
+    monkeypatch.setitem(S._reddit_token, "value", "")
+    monkeypatch.setitem(S._reddit_token, "exp", 0.0)
+    calls = []
+
+    def fake_get(url, *args, **kwargs):
+        calls.append(url)
+        return None, "shared provider request budget depleted for reddit"
+
+    monkeypatch.setattr(S, "_get", fake_get)
+    result = S.reddit("offline AI assistant")
+
+    assert not result.ok
+    assert "no anonymous fallback attempted" in result.error
+    assert calls == ["https://www.reddit.com/api/v1/access_token"]
 
 
 def test_reddit_community_adapter_is_skipped_when_oauth_cold_start_exceeds_cap(monkeypatch):
