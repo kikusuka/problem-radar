@@ -9,6 +9,7 @@ Lenses decide what kind of fix the person is open to, and so where and how we se
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -364,21 +365,25 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         text = _body(p)
         rel = _rel(terms, text)
         community = p.meta.get("community")
-        if community == "loose" and not any(relevance(t, text, loose=True) > 0 for t in terms):
-            community = False  # a loosely related community: the post itself must mention the topic
+        topic_match = any(is_relevant(t, text) for t in terms if t and t.strip())
+        # Community membership is only a discovery hint. It must never override the post's own topic relevance.
+        if not topic_match:
+            community = False
+        elif community == "loose" and not any(relevance(t, text, loose=True) > 0 for t in terms):
+            community = False
         if community:
-            rel = max(rel, 0.8 if community is True or community == "tight" else 0.6)  # relevant because of where it was posted
+            rel = max(rel, 0.8 if community is True or community == "tight" else 0.6)
         structured = p.source in STRUCTURED
         paper = p.source in PAPERS
         if require_pain and paper and gap_cues(text) < 1:
             continue
         if require_pain and not structured and not paper and p.source not in WEB and not looks_like_pain(text):
             continue
-        title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0  # topic in the title beats a body mention
+        title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
         score = heat(text, p.score, p.comments) + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
-        about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
-        if not community and (not about or not any(is_relevant(t, text) for t in terms)):
-            if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):  # near miss: loose stems
+        about = structured or paper or p.source in WEB or is_focused(terms, p.title, text)
+        if not about or not topic_match:
+            if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):
                 misses.append((score, p, rel, text))
             continue
         ranked.append((score, p, rel, text))
@@ -404,6 +409,9 @@ def _diversify(ranked: list, limit: int) -> list:
 def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[str] | None = None,
              se_sites: list[str] | None = None, force: bool = False, lens: str = "any", goal: str = "general",
              also: list[str] | None = None, region: str | None = None) -> dict:
+    if not isinstance(niche, str) or not niche.strip():
+        raise ValueError("niche must be a non-empty string")
+    niche = niche.strip()
     reg = R.resolve(region)
     depth = "deep" if depth == "deep" else "quick"
     lens = lens if lens in LENSES else "any"
@@ -411,7 +419,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     limit = max(5, min(limit, 60))
     also = [t.strip() for t in (also or []) if t and t.strip()][:4]
     cacheable = sources is None and se_sites is None and not also
-    key = f"{slug(niche)}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
+    fingerprint = hashlib.sha256(niche.casefold().encode("utf-8")).hexdigest()[:16]
+    key = f"{slug(niche)}-{fingerprint}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
     if cacheable and not force:
         hit = _load(key)
         if hit:
@@ -480,6 +489,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
 def search(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
            se_sites: list[str] | None = None) -> dict:
     """Raw search with your own wording. Still dedupes and drops posts that don't match."""
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    query = query.strip()
     names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
     jobs = []
     for n in names:
@@ -518,6 +530,10 @@ VALIDATION_EXTRA = {
 
 
 def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
+    if not isinstance(problem, str) or not problem.strip():
+        raise ValueError("problem must be a non-empty string")
+    problem = problem.strip()
+    niche = niche.strip() if isinstance(niche, str) else ""
     lens = lens if lens in SOLUTION_WORDS else "software"
     qs = [f"{problem} alternative", f"{problem} tool", f'"I pay for" {problem}', f"{problem} workaround"]
     if lens == "hardware":
@@ -536,8 +552,9 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
     buckets = {"existing_solutions": [], "paying_signals": [], "workaround_signals": []}
     for p in _dedupe(raw):
         text = _body(p)
-        rel = relevance(problem, text)
-        if rel < 0.3:
+        terms = [term for term in (niche, problem) if term]
+        rel = max((relevance(term, text) for term in terms), default=0.0)
+        if rel < 0.3 or not any(is_relevant(term, text) for term in terms):
             continue
         item = _compact(p, rel, text)
         if solution_re.search(text):
