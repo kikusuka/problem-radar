@@ -1175,6 +1175,54 @@ def test_nyc311_app_token_is_sent_without_changing_public_query(monkeypatch):
     assert calls["params"]["$limit"] <= 30
 
 
+def test_github_rate_limited_403_cools_down_until_reset_without_retry(monkeypatch):
+    monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
+    monkeypatch.setitem(S._REQUEST_PROVIDER_BURSTS, "github", 2.0)
+    monkeypatch.setitem(S._REQUEST_INTERVALS, "github", 2.0)
+    calls = []
+    reset = time.time() + 90
+
+    class RateLimitedResponse:
+        status_code = 403
+        headers = {
+            "X-RateLimit-Remaining": "0",
+            "X-RateLimit-Reset": str(reset),
+        }
+        text = "API rate limit exceeded"
+
+        def raise_for_status(self):
+            pytest.fail("rate-limited response should be returned before raise_for_status")
+
+    def fake_request(*args, **kwargs):
+        calls.append((args, kwargs))
+        return RateLimitedResponse()
+
+    monkeypatch.setattr(S.httpx, "request", fake_request)
+    data, error = S._get("https://api.github.com/search/issues", {"q": "test"})
+
+    assert data is None and "rate limited (403)" in error
+    data2, error2 = S._get("https://api.github.com/search/repositories", {"q": "test"})
+    assert data2 is None and "cooldown active" in error2
+    assert len(calls) == 1
+
+
+def test_stackexchange_method_backoff_is_honored_even_on_http_success(monkeypatch):
+    monkeypatch.setitem(S._se_cooldown, "until", 0.0)
+    calls = []
+
+    def fake_get(*args, **kwargs):
+        calls.append((args, kwargs))
+        return ({"items": [], "backoff": 60}, "")
+
+    monkeypatch.setattr(S, "_get", fake_get)
+    first = S.se("offline assistant", site="superuser")
+    second = S.se("offline assistant", site="superuser")
+
+    assert first.ok and first.posts == []
+    assert not second.ok and "cooling down" in second.error
+    assert len(calls) == 1
+
+
 def test_shared_provider_budget_blocks_bursts_without_sleeping(monkeypatch):
     monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
     monkeypatch.setattr(S.time, "monotonic", lambda: clock[0])
