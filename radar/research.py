@@ -23,7 +23,7 @@ from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
 from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, query_variants, relevance,
-                   signals, topic_fit, query_expansions)
+                   signals, topic_fit, topic_fit_with_alternates, topic_alternate_shares_anchor, query_expansions)
 from .signal_quality import signal_profile
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -664,18 +664,19 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         topic_terms = [t for t in terms if t and t.strip()]
         # Top results must directly match the topic, not just one loose word.
         # Synonym-aware anchors are used to surface near-misses, not to bypass this gate.
-        topic_match = any(is_relevant(t, text) and topic_fit(t, text, p.title) for t in topic_terms)
-        # A post in a discovered adjacent community may use one familiar term ("hearing")
-        # rather than the full phrase ("hearing aids"); keep that separate from general search.
-        community_match = any(relevance(t, text, loose=True) >= 0.5 for t in topic_terms)
-        # For very short topics, a matching community name can supply context that the post omits.
+        primary_topic = topic_terms[0] if topic_terms else ""
+        alternates = [t for t in topic_terms[1:] if topic_alternate_shares_anchor(primary_topic, t)]
+        topic_match = topic_fit_with_alternates(primary_topic, alternates, text, p.title)
+        # Community context can loosen phrase matching only when the candidate still
+        # mentions the actual topic; constraint-only terms do not supply a topic anchor.
+        community_match = bool(primary_topic and relevance(primary_topic, text, loose=True) >= 0.5)
+        # For very short primary topics, a matching community name can supply context.
         community_name_match = (
             community == "tight"
-            and any(len(re.findall(r"[a-z0-9]+", t.lower())) <= 2 for t in topic_terms)
-        ) or any(
-            len(re.findall(r"[a-z0-9]+", t.lower())) <= 2
-            and relevance(t, p.meta.get("site", ""), loose=True) >= 0.5
-            for t in topic_terms
+            and len(re.findall(r"[a-z0-9]+", primary_topic.lower())) <= 2
+        ) or (
+            len(re.findall(r"[a-z0-9]+", primary_topic.lower())) <= 2
+            and relevance(primary_topic, p.meta.get("site", ""), loose=True) >= 0.5
         )
         if community and (community_match or community_name_match):
             topic_match = True
@@ -716,7 +717,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         score = heat(text, p.score, p.comments) + signal_bonus + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
         about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
         if not about or not topic_match:
-            if (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)) and any(topic_fit(t, text, p.title) for t in topic_terms):
+            if (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)) and topic_fit_with_alternates(primary_topic, alternates, text, p.title):
                 misses.append((score, p, rel, text))
             continue
         ranked.append((score, p, rel, text))
