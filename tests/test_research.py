@@ -648,3 +648,19 @@ def test_unrelated_purchase_is_not_a_paying_signal(monkeypatch):
     monkeypatch.setattr(research, "run_jobs", lambda jobs: ([post], {}))
     out = research.validate("quickbooks invoices reconciliation", "accounting")
     assert out["counts"]["paying_signals"] == 0
+
+
+def test_hunt_plan_keeps_a_specific_unmapped_interest():
+    from radar import hunt
+
+    interest = "offline AI assistant for low-end Android phones"
+    result = hunt.plan_hunt(interests=[interest], skills=["python"], lens="software")
+    assert result["seed_niches"][0]["niche"] == interest
+
+
+def test_student_hunt_keeps_a_specific_project_interest():
+    from radar import hunt
+
+    interest = "offline AI assistant for low-end Android phones"
+    result = hunt.student_hunt(field="computer science", interests=[interest])
+    assert result["seed_niches"][0]["niche"] == interest
