@@ -12,7 +12,7 @@ Sources (free public access or free tiers; quotas and access policies still appl
   europepmc  Biomedical papers and preprints no key
   petitions  UK Parliament petitions         no key; UK only
   nyc311     NYC 311 complaints              no key; NYC only
-  openFDA    Medical-device event reports    no key; US only
+  openFDA    Medical-device event reports    optional free OPENFDA_KEY; US only
 """
 from __future__ import annotations
 
@@ -491,7 +491,7 @@ def fda_devices(query: str, limit: int = 20, **_) -> Result:
         params["api_key"] = os.environ["OPENFDA_KEY"]
     data, err = _get("https://api.fda.gov/device/event.json", params)
     if data is None:
-        if err.startswith("HTTPStatusError") and "404" in err:
+        if err.startswith("HTTP 404 from openFDA"):
             return Result([])  # openFDA answers 404 when nothing matches
         return Result([], False, err)
     out = []
