@@ -191,8 +191,8 @@ def request_limiter_status() -> dict:
             }
     return {
         "scope": "current process only; resets on restart",
-        "maximum_burst_requests_per_provider": int(_REQUEST_BURST),
-        "policy": "non-blocking; no automatic retry; provider 429 applies cooldown",
+        "maximum_configured_burst_requests_per_provider": int(_REQUEST_BURST),
+        "policy": "non-blocking; no automatic retries; provider rate-limit responses apply cooldown",
         "providers": providers,
     }
 
@@ -263,8 +263,13 @@ def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
             return None, f"blocked or unauthorized ({r.status_code})"
         r.raise_for_status()
         return r.json(), ""
-    except Exception as e:  # network, JSON, status
-        return None, f"{type(e).__name__}: {str(e)[:100]}"
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code if e.response is not None else "unknown"
+        return None, f"HTTP {status} from {_provider_for_url(url)}"
+    except httpx.TimeoutException:
+        return None, f"request timed out for {_provider_for_url(url)}"
+    except Exception as e:  # network, JSON, parsing: never echo request URLs or query strings
+        return None, f"{type(e).__name__} from {_provider_for_url(url)}"
 
 
 # ---------------------------------------------------------------- Hacker News
