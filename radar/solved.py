@@ -101,6 +101,9 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
 
 
 def check(problem: str, lens: str = "software") -> dict:
+    if not isinstance(problem, str) or not problem.strip():
+        raise ValueError("problem must be a non-empty string")
+    problem = problem.strip()
     lens = lens if lens in ("software", "hardware", "policy", "research", "any") else "software"
     variants = query_variants(problem)
     jobs: list[Job] = []
