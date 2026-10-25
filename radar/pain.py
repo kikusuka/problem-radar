@@ -618,3 +618,59 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
     # Retain the broad overlap threshold for other query words, but don't let
     # generic/platform/failure anchors compensate for a missing domain concept.
     return matched >= max(1, math.ceil(0.6 * len(groups)))
+
+
+def _matched_topic_groups(query: str, text: str, title: str = "") -> tuple[list[tuple[str, str]], set[str]]:
+    """Return domain anchor groups matched by a candidate, using the same aliases as topic_fit."""
+    groups = _topic_groups(query)
+    candidate = f"{title or ''} {text or ''}".lower()
+    matched: set[str] = set()
+    for key, anchor in groups:
+        if key.startswith("word:"):
+            found = _has_word(anchor, candidate, loose=True)
+        else:
+            found = any(
+                re.search(r"\\b" + r"\\s+".join(re.escape(part) for part in alias.lower().split()) + r"\\b", candidate, re.I)
+                for alias in _TOPIC_ALIAS_GROUPS[key]
+            )
+        if found:
+            matched.add(key)
+    return groups, matched
+
+
+def topic_candidate_fit(query: str, text: str, title: str = "") -> bool:
+    """Allow a partial topic match to be surfaced for inspection, never as a confirmed result.
+
+    This is deliberately looser than topic_fit(): candidate leads may use a related
+    term or describe one part of a compound niche. Core identity anchors still matter;
+    an AI query must mention an AI/language-model concept, and technical-failure queries
+    must mention the failure. Callers should label matches as leads, not proof.
+    """
+    if topic_fit(query, text, title):
+        return True
+    groups, matched = _matched_topic_groups(query, text, title)
+    if not groups:
+        return False
+    candidate = f"{title or ''} {text or ''}"
+    if _TECHNICAL_FAILURE_CUE.search(query or "") and not _TECHNICAL_FAILURE_CUE.search(candidate):
+        return False
+
+    group_keys = {key for key, _ in groups}
+    # Keep the AI/model subject mandatory; don't surface generic Android crashes as
+    # partial matches for an AI assistant problem.
+    if "ai_language_model" in group_keys and "ai_language_model" not in matched:
+        return False
+    core = group_keys & _CORE_TOPIC_GROUPS
+    if core and not (core & matched):
+        return False
+    return len(matched) >= max(1, math.ceil(0.5 * len(groups)))
+
+
+def topic_anchor_gaps(query: str, text: str, title: str = "") -> list[str]:
+    """List topic anchors not demonstrated by a related candidate."""
+    groups, matched = _matched_topic_groups(query, text, title)
+    return [
+        (anchor if key.startswith("word:") else key.replace("_", " "))
+        for key, anchor in groups if key not in matched
+    ]
+
