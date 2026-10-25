@@ -740,7 +740,7 @@ def test_query_variants_preserve_offline_low_resource_and_platform_constraints()
 def test_ranking_requires_explicit_hard_constraints_even_with_topic_overlap():
     niche = "offline AI assistant for low-end Android phones"
     valid = P("hn", 1201, "Offline AI assistant for low-end Android phones",
-              "This runs offline on low-end Android phones with limited RAM.", "a")
+              "This runs offline on low-end Android phones with limited RAM; it is frustrating and I wish there were a better way.", "a")
     misses_resource = P("hn", 1202, "Offline AI assistant for Android",
                         "This assistant runs offline on Android but needs a flagship phone with 12 GB RAM.", "b")
     ranked, near = research._rank([valid, misses_resource], [niche])
