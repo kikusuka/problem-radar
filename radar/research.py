@@ -197,6 +197,17 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
     return selected
 
 
+def _query_order_for_source(queries: list[str], source_index: int) -> list[str]:
+    """Keep the primary query everywhere, but spread alternates across source providers."""
+    unique = list(dict.fromkeys(q.strip() for q in queries if isinstance(q, str) and q.strip()))
+    if len(unique) <= 2:
+        return unique
+    primary, alternates = unique[0], unique[1:]
+    offset = source_index % len(alternates)
+    rotated = alternates[offset:] + alternates[:offset]
+    return [primary] + rotated
+
+
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
          lens: str = "any", also: list[str] | None = None, region: dict | None = None) -> list[Job]:
     """Plan compact topic and synonym queries first; generic modifiers are lower priority under tight provider caps."""
@@ -235,30 +246,35 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
         r"fails? to load|failure to load|battery drain)\b",
         niche, re.I,
     ))
-    ordered_alternates = expanded + extra if failure_query else extra + expanded
-    queries = list(dict.fromkeys([compact[0]] + ordered_alternates + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
+    # Constraint-preserving expansions come before broad analyst synonyms. Each provider
+    # gets the shared primary query, then a rotated alternate so one synonym does not
+    # consume every provider's second request slot.
+    queries = list(dict.fromkeys([compact[0]] + expanded + extra + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
     jobs: list[Job] = []
-    for name in names:
+    for source_index, name in enumerate(names):
+        source_queries = _query_order_for_source(queries, source_index)
         if name == "se":
             sites = se_sites or (topic_sites(niche) + (cfg["se"] or se_sites_for(niche)))
             sites = list(dict.fromkeys(sites))[:4]
-            for site in sites:
-                for q in queries[: 3 if deep else 2] + extra[:1]:
+            # The two-request Stack Exchange allowance is better spent on two topic
+            # communities than on repeating the same site with different query strings.
+            for q in source_queries[: 3 if deep else 2]:
+                for site in sites:
                     jobs.append(Job("se", q, {"site": site}, per))
         elif name == "github":
-            jobs += [Job("github", q, {}, per) for q in queries[:3]]
+            jobs += [Job("github", q, {}, per) for q in source_queries[:3]]
         elif name in PAPERS:
-            jobs += [Job(name, q, {}, per) for q in queries[: 5 if deep else 4]]
+            jobs += [Job(name, q, {}, per) for q in source_queries[: 5 if deep else 4]]
         elif name == "reddit_community":
             # One Reddit community job uses the provider's full two-request budget.
-            # Use the compact primary query and avoid creating unselectable duplicate jobs.
-            jobs.append(Job("reddit_community", queries[0], {}, per))
-        elif name == "fda_devices":  # generic device names: use the niche and the analyst's synonyms ("hearing aid", "wheelchair")
+            # Use the primary query only; there is no room for a second request.
+            jobs.append(Job("reddit_community", source_queries[0], {}, per))
+        elif name == "fda_devices":  # structured device reports: use the niche and analyst synonyms
             jobs += [Job("fda_devices", q, {}, per) for q in dict.fromkeys([niche] + extra[:3])]
         elif name in STRUCTURED:
             jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
-        else:  # hn, reddit
-            jobs += [Job(name, q, {}, per) for q in queries]
+        else:  # HN, Reddit, GitLab, and other query-based sources
+            jobs += [Job(name, q, {}, per) for q in source_queries]
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
     if region:  # bias toward the place: its own communities, and its name in the query
         if "reddit" in names:
@@ -815,14 +831,14 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
     names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
     variants = [query] + query_expansions(query, max_variants=4)
     jobs = []
-    for n in names:
+    for source_index, n in enumerate(names):
+        source_variants = _query_order_for_source(variants, source_index)
         if n == "se":
-            # Keep the current site-focused budget; these sites have different
-            # vocabularies and the provider allows only two requests per call.
-            jobs += [Job("se", query, {"site": site}, limit) for site in (se_sites or se_sites_for(query))[:3]]
+            # Spend Stack Exchange's request allowance on different communities.
+            jobs += [Job("se", query, {"site": site}, limit) for site in (se_sites or se_sites_for(query))[:2]]
         elif n in {"hn", "reddit", "github", "gitlab", "bluesky"}:
             opts = {"subreddit": subreddit} if n == "reddit" and subreddit else {}
-            jobs += [Job(n, variant, opts, limit) for variant in variants[:2]]
+            jobs += [Job(n, variant, opts, limit) for variant in source_variants[:2]]
         else:
             # Structured endpoints and specialist sources get their original query.
             jobs.append(Job(n, query, {}, limit))
