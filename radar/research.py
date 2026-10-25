@@ -32,6 +32,30 @@ DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited 
 MAX_QUERY_CHARS = 400
 MAX_JOBS_PER_REQUEST = 16  # bound one public MCP call so one search cannot monopolize shared source capacity
 
+MAX_QUERY_LIST_ITEMS = 12
+MAX_QUERY_LIST_ITEM_CHARS = 100
+
+
+def _bounded_string_list(values, name: str, max_items: int = MAX_QUERY_LIST_ITEMS,
+                         max_item_chars: int = MAX_QUERY_LIST_ITEM_CHARS) -> list[str] | None:
+    """Validate public list arguments, cap their size, and remove duplicates."""
+    if values is None:
+        return None
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"{name} must be a list of strings")
+    if len(values) > max_items:
+        raise ValueError(f"{name} may contain at most {max_items} items")
+    out = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError(f"{name} must contain only strings")
+        value = value.strip()
+        if len(value) > max_item_chars:
+            raise ValueError(f"each {name} item must be at most {max_item_chars} characters")
+        if value and value not in out:
+            out.append(value)
+    return out
+
 # One shared pool bounds source work across concurrent MCP requests. Timed-out calls
 # may still be running in Python threads, so never create a fresh pool per request.
 _SOURCE_WORKERS = 8
@@ -143,6 +167,8 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
          lens: str = "any", also: list[str] | None = None, region: dict | None = None) -> list[Job]:
     """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
+    sources = _bounded_string_list(sources, "sources")
+    se_sites = _bounded_string_list(se_sites, "se_sites")
     lens = lens if lens in LENSES else "any"
     cfg = LENSES[lens]
     deep = depth == "deep"
@@ -505,7 +531,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     lens = lens if lens in LENSES else "any"
     goal = goal if goal in GOALS else "general"
     limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 25, 60))
-    also = [t.strip() for t in (also or []) if isinstance(t, str) and t.strip()][:4]
+    also = [t.strip() for t in _bounded_string_list(also, "also", max_items=4, max_item_chars=200) or []][:4]
     if any(len(term) > 200 for term in also):
         raise ValueError("each related term must be at most 200 characters")
     cacheable = sources is None and se_sites is None and not also
@@ -588,6 +614,10 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
     query = query.strip()
     if len(query) > MAX_QUERY_CHARS:
         raise ValueError(f"query must be at most {MAX_QUERY_CHARS} characters")
+    sources = _bounded_string_list(sources, "sources")
+    se_sites = _bounded_string_list(se_sites, "se_sites")
+    if subreddit is not None and (not isinstance(subreddit, str) or len(subreddit) > 80):
+        raise ValueError("subreddit must be a string of at most 80 characters")
     limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 20, 30))
     names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
     jobs = []
