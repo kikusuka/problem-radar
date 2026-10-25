@@ -36,6 +36,24 @@ def test_ordinary_first_person_complaint_is_not_promotion():
     assert all(item["confidence"] == 1.0 for item in profile["matches"])
 
 
+def test_vendor_guides_and_software_roundups_get_non_demand_evidence_kind():
+    examples = [
+        "What's the Best Residential HVAC Invoicing Software For Billing and Payments? "
+        "Over the past month, I spent some time testing out five different options.",
+        "How Healthcare Teams Can Use AP Automation Software. "
+        "The hidden cost of manual AP in healthcare; what to look for in automation software.",
+        "Automated Bank Reconciliation: A Complete Guide. "
+        "Manual vs. automated bank reconciliation and the benefits of software.",
+        "7 Of The Best Subscription Management Software Solutions For B2B SaaS Startups. "
+        "Key takeaways and pricing comparisons.",
+    ]
+
+    for text in examples:
+        profile = signal_quality.signal_profile(text)
+        assert profile["evidence_kind"] == "vendor_editorial", (text, profile["evidence_kind"])
+        assert profile["promotional"] is False
+
+
 def test_compact_research_results_include_traceable_signal_annotations():
     post = S.Post(
         "reddit", "signal-test", "Invoice export is too slow",

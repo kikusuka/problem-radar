@@ -901,6 +901,27 @@ def test_validation_does_not_attach_payment_or_workaround_to_an_unrelated_senten
     assert "does not prove" in out["evidence_note"]
 
 
+def test_validation_does_not_count_vendor_editorial_as_market_demand(monkeypatch):
+    vendor_article = P(
+        "reddit", "vendor-ap-automation",
+        "How Healthcare Teams Can Use AP Automation Software",
+        "The hidden cost of manual AP in healthcare is large. "
+        "Our manual invoice reconciliation software costs $50 per month, and teams can use a spreadsheet workaround.",
+        "vendor-account",
+    )
+    monkeypatch.setattr(
+        research, "run_jobs",
+        lambda jobs: ([vendor_article], {"reddit": {"state": "ok", "posts": 1}, "hn": {"state": "ok", "posts": 0}}),
+    )
+
+    out = research.validate("manual invoice reconciliation", "accounting invoice reconciliation")
+
+    assert out["counts"]["paying_signals"] == 0
+    assert out["counts"]["willingness_to_pay_signals"] == 0
+    assert out["counts"]["workaround_signals"] == 0
+    assert out["evidence_status"] == "insufficient_evidence"
+
+
 def test_validation_separates_existing_spend_from_explicit_willingness_to_pay(monkeypatch):
     p = P("hn", 1204, "Offline AI assistant for low-end Android phones",
           "I would pay $5 a month for an offline AI assistant on a low-end Android phone.", "a")
