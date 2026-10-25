@@ -769,7 +769,11 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         "$order": "n DESC",
         "$limit": min(limit, 30),
     }
-    data, err = _get("https://data.cityofnewyork.us/resource/erm2-nwe9.json", params)
+    headers = {}
+    app_token = os.environ.get("NYC311_APP_TOKEN", "").strip()
+    if app_token:
+        headers["X-App-Token"] = app_token
+    data, err = _get("https://data.cityofnewyork.us/resource/erm2-nwe9.json", params, headers or None)
     if data is None or not isinstance(data, list):
         return Result([], False, err or "unexpected response")
     out = []
@@ -798,7 +802,7 @@ def enabled() -> dict:
         "scholar": {"enabled": True, "note": "OpenAlex papers; free key raises the daily budget" + (" (OPENALEX_API_KEY set)" if os.environ.get("OPENALEX_API_KEY") else "; set OPENALEX_API_KEY for the larger free daily budget") + ("; polite email set" if os.environ.get("OPENALEX_MAILTO") else "")},
         "github_repo": {"enabled": True, "note": "GitHub repository search, used by check_if_solved"},
         "petitions": {"enabled": True, "note": "UK Parliament petitions with signature counts; no key; UK only"},
-        "nyc311": {"enabled": True, "note": "NYC 311 complaint counts, last 12 months; no key; NYC only"},
+        "nyc311": {"enabled": True, "note": "NYC 311 complaint counts; NYC only" + (" (NYC311_APP_TOKEN set)" if os.environ.get("NYC311_APP_TOKEN", "").strip() else "; optional free NYC311_APP_TOKEN provides a dedicated Socrata app pool")},
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
