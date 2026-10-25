@@ -234,6 +234,14 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
             names.remove("reddit_community")
     extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # analyst-supplied alternate wording
     compact = query_variants(niche)
+    # Never issue a bare analyst synonym by itself: that can drop the user's subject
+    # and hard constraints (e.g. "low RAM" instead of "offline Android AI assistant").
+    # Extra terms are appended to the compact constraint-preserving subject. This is
+    # deliberately conservative on a small request budget.
+    extra_queries = list(dict.fromkeys(
+        f"{compact[0]} {term}" for term in extra
+        if term.casefold() not in compact[0].casefold()
+    ))
     # Use a short constraint-preserving query first, then the user's own synonyms,
     # then a compact alternative and finally generic modifiers. Under the 1–2 request
     # cap, this makes selected calls meaningfully different instead of "niche problem".
@@ -249,7 +257,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     # Constraint-preserving expansions come before broad analyst synonyms. Each provider
     # gets the shared primary query, then a rotated alternate so one synonym does not
     # consume every provider's second request slot.
-    queries = list(dict.fromkeys([compact[0]] + expanded + extra + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
+    queries = list(dict.fromkeys([compact[0]] + expanded + extra_queries + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
     jobs: list[Job] = []
     for source_index, name in enumerate(names):
         source_queries = _query_order_for_source(queries, source_index)
@@ -269,8 +277,8 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
             # One Reddit community job uses the provider's full two-request budget.
             # Use the primary query only; there is no room for a second request.
             jobs.append(Job("reddit_community", source_queries[0], {}, per))
-        elif name == "fda_devices":  # structured device reports: use the niche and analyst synonyms
-            jobs += [Job("fda_devices", q, {}, per) for q in dict.fromkeys([niche] + extra[:3])]
+        elif name == "fda_devices":  # structured device reports: synonyms must keep the subject/constraints
+            jobs += [Job("fda_devices", q, {}, per) for q in dict.fromkeys([niche] + extra_queries[:3])]
         elif name in STRUCTURED:
             jobs.append(Job(name, niche, {}, per))  # structured data takes the topic itself
         else:  # HN, Reddit, GitLab, and other query-based sources
@@ -278,7 +286,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
     if region:  # bias toward the place: its own communities, and its name in the query
         if "reddit" in names:
-            jobs += [Job("reddit", q, {"subreddit": sub}, per) for sub in region["subreddits"][:2] for q in dict.fromkeys([niche] + extra[:1])]
+            jobs += [Job("reddit", q, {"subreddit": sub}, per) for sub in region["subreddits"][:2] for q in dict.fromkeys([niche] + extra_queries[:1])]
         if "hn" in names:
             jobs.append(Job("hn", f"{niche} {region['name']}", {}, per))
     return jobs
@@ -470,6 +478,11 @@ def _search_diagnostics(qualifying_count: int, near_miss_count: int, coverage: d
         name for name, st in coverage.items()
         if st.get("request_limited") or st.get("capacity_limited")
         or st.get("timed_out", 0) or st.get("cancelled_before_start", 0)
+        or any(
+            "shared provider request budget depleted" in str(error).lower()
+            or "shared provider cooldown active" in str(error).lower()
+            for error in (st.get("errors") or [])
+        )
     )
     failed = sorted(
         name for name, st in coverage.items()
