@@ -475,6 +475,17 @@ def _candidate_has_topic_group(group: str, candidate: str) -> bool:
     )
 
 
+def topic_alternate_shares_anchor(query: str, alternate: str) -> bool:
+    """Whether an alternate shares a meaningful anchor with the original topic.
+
+    Constraint-only fragments such as "no internet" and "low RAM" have no topic anchors
+    and must not independently qualify unrelated results.
+    """
+    base = {key for key, _ in _topic_groups(query)}
+    alt = {key for key, _ in _topic_groups(alternate)}
+    return bool(base and alt and (base & alt))
+
+
 def topic_fit_with_alternates(query: str, alternates: list[str], text: str, title: str = "") -> bool:
     """Use synonyms to improve recall without letting constraints become stand-alone topics.
 
