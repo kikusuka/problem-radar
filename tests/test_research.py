@@ -845,3 +845,61 @@ def test_research_reports_planned_completed_and_succeeded_jobs_separately():
     assert out["queries_planned"] >= out["queries_run"] >= out["queries_succeeded"]
     assert "queries_timed_out" in out
     assert "queries_cancelled_before_start" in out
+
+
+# Live-test regressions: one budget for all research phases, and evidence semantics.
+def test_research_fallback_stays_inside_one_shared_job_budget(monkeypatch):
+    calls = []
+
+    def fake_source(source):
+        def run(query, limit=20, **kwargs):
+            calls.append((source, query))
+            return S.Result([])
+        return run
+
+    monkeypatch.setattr(research, "plan", lambda *args, **kwargs: [
+        research.Job("hn", f"query-{i}") for i in range(30)
+    ])
+    monkeypatch.setitem(S.SOURCES, "hn", fake_source("hn"))
+    monkeypatch.setitem(S.SOURCES, "ddg", fake_source("ddg"))
+    monkeypatch.setattr(S, "enabled", lambda: {"ddg": {"enabled": True}})
+
+    out = research.research("offline assistant", force=True)
+
+    assert len(calls) <= research.MAX_JOBS_PER_REQUEST
+    assert len([c for c in calls if c[0] == "hn"]) == research.MAX_JOBS_PER_REQUEST - research.MAX_FALLBACK_JOBS
+    assert len([c for c in calls if c[0] == "ddg"]) <= research.MAX_FALLBACK_JOBS
+    assert out["queries_planned"] > out["queries_budgeted"]
+    assert out["queries_budgeted"] <= research.MAX_JOBS_PER_REQUEST
+    assert out["queries_run"] <= research.MAX_JOBS_PER_REQUEST
+    assert out["coverage"]["ddg"]["jobs"] == research.MAX_FALLBACK_JOBS
+
+
+def test_validation_applies_hard_constraints_to_document_not_every_sentence(monkeypatch):
+    post = P(
+        "hn", 1291, "Offline AI assistant for Android",
+        "The assistant runs on low-end Android phones with limited RAM and works without internet. "
+        "I would pay $5 a month for an assistant that answers questions and keeps notes.",
+        "person-a",
+    )
+    monkeypatch.setattr(
+        research, "run_jobs",
+        lambda jobs: ([post], {"hn": {"state": "ok", "posts": 1}, "reddit": {"state": "ok", "posts": 0}}),
+    )
+
+    out = research.validate("offline AI assistant for low-end Android phones", "offline Android AI")
+
+    assert out["counts"]["willingness_to_pay_signals"] == 1
+    assert out["counts"]["paying_signals"] == 0
+
+
+def test_related_paper_alone_does_not_mean_partially_solved():
+    paper = {"name": "Low-Internet Optimized Web Applications for Rural India", "score": 3}
+
+    assessment = solved.assess(
+        projects=[], papers=[paper], actions=[], lens="software",
+        discussion=[], raw_count=60, sources_ok=3,
+    )
+
+    assert assessment["hint"] == "no_clear_solution_found"
+    assert any("do not by themselves demonstrate a working solution" in reason for reason in assessment["reasons"])

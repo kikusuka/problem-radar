@@ -28,10 +28,11 @@ from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints,
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
-CACHE_SCHEMA_VERSION = 2  # ranking and output schema changed; do not serve old cached reports
+CACHE_SCHEMA_VERSION = 3  # evidence assessment and request-budget output changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
-MAX_JOBS_PER_REQUEST = 16  # bound one public MCP call so one search cannot monopolize shared source capacity
+MAX_JOBS_PER_REQUEST = 16  # total budget across every phase of one public MCP call
+MAX_FALLBACK_JOBS = 2  # reserve a small second-pass budget for thin default niche searches
 
 MAX_QUERY_LIST_ITEMS = 12
 MAX_QUERY_LIST_ITEM_CHARS = 100
@@ -143,6 +144,7 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
     Jobs are chosen round-robin by source, preserving each source's own query order.
     This prevents a single broad/deep request from taking all shared source slots.
     """
+    limit = max(0, limit)
     if len(jobs) <= limit:
         return jobs
     grouped: dict[str, list[Job]] = {}
@@ -211,7 +213,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     return jobs
 
 
-def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
+def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post], dict]:
     status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "cancelled_before_start": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
                          "capacity_limited": False, "request_limited": False} for j in jobs}
     for j in jobs:
@@ -219,7 +221,8 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
     posts: list[S.Post] = []
     futs = {}
     submitted_by_source = {source: 0 for source in status}
-    selected_jobs = _limit_jobs(jobs)
+    job_budget = MAX_JOBS_PER_REQUEST if max_jobs is None else max(0, min(max_jobs, MAX_JOBS_PER_REQUEST))
+    selected_jobs = _limit_jobs(jobs, job_budget)
     selected_ids = {id(j) for j in selected_jobs}
     for j in jobs:
         if id(j) not in selected_ids:
@@ -555,21 +558,33 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
             return hit
 
     jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
-    raw, status = run_jobs(jobs)
+    # Default niche research may need a second pass. Reserve up to two of the
+    # same 16 request jobs for it instead of letting fallback bypass the cap.
+    ddg_enabled = sources is None and S.enabled()["ddg"]["enabled"]
+    initial_budget = MAX_JOBS_PER_REQUEST - MAX_FALLBACK_JOBS if ddg_enabled else MAX_JOBS_PER_REQUEST
+    main_jobs_budgeted = len(_limit_jobs(jobs, initial_budget))
+    raw, status = run_jobs(jobs, max_jobs=initial_budget)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
     fallback_note = ""
-    if sources is None and len(kept) < 8 and S.enabled()["ddg"]["enabled"]:
-        # thin results: try DuckDuckGo as a last resort, then re-rank everything together
+    fallback_jobs: list[Job] = []
+    fallback_jobs_budgeted = 0
+    if sources is None and len(kept) < 8 and ddg_enabled:
+        # Thin results: use only the remaining portion of the same request budget.
         where = f" {reg['name']}" if reg else ""
         qs = [f"{t} problems complaints{where}" for t in ([niche] + also)[:2]] + [f"{niche} struggle OR frustrating OR unmet need{where}"]
-        web_raw, web_status = run_jobs([Job("ddg", q, {}, 8) for q in qs])
+        fallback_jobs = [Job("ddg", q, {}, 8) for q in qs]
+        remaining_budget = max(0, MAX_JOBS_PER_REQUEST - main_jobs_budgeted)
+        fallback_jobs_budgeted = len(_limit_jobs(fallback_jobs, remaining_budget))
+        web_raw, web_status = run_jobs(fallback_jobs, max_jobs=remaining_budget)
         status.update(web_status)
         if web_raw:
             raw = raw + web_raw
             ranked, misses = _rank(raw, [niche] + also)
             kept = [p for _, p, _, _ in ranked]
-            fallback_note = "Results were thin, so DuckDuckGo web pages were added (source 'ddg'). They are leads to verify, not complaints."
+            fallback_note = "The initial results were thin, so DuckDuckGo was queried within the same 16-job budget. Returned web pages are low-trust leads to verify, not complaints."
+        else:
+            fallback_note = "The initial results were thin, but DuckDuckGo returned no additional usable leads within the shared request budget. Review coverage, try alternate wording, and verify with people who experience the problem."
     ranked = _diversify(ranked, limit)
     payload = {
         "niche": niche,
@@ -577,7 +592,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "goal": goal,
         "depth": depth,
         "generated_at": int(time.time()),
-        "queries_planned": len(jobs),
+        "queries_planned": len(jobs) + len(fallback_jobs),
+        "queries_budgeted": main_jobs_budgeted + fallback_jobs_budgeted,
         "queries_run": sum(st["completed"] for st in status.values()),
         "queries_succeeded": sum(st["ok"] for st in status.values()),
         "queries_timed_out": sum(st["timed_out"] for st in status.values()),
@@ -728,8 +744,9 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
     terms = list(dict.fromkeys([*variants, niche]))
     terms = [term for term in terms if term]
     def sentence_is_about_problem(sentence: str) -> bool:
-        if not constraints_match(problem, sentence):
-            return False
+        # Hard requirements are checked once against the whole candidate document below.
+        # Requiring every constraint in each individual sentence drops real evidence when
+        # the title or another sentence supplies the platform/offline/resource details.
         return any(relevance(term, sentence, loose=True) > 0 for term in terms)
 
     for p in _dedupe(raw):

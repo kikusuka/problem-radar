@@ -104,7 +104,8 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     separate reports, products, papers and official data. Check coverage before interpreting a thin result set. A missing
     result is not evidence that the problem does not exist. depth: quick (default) or deep. sources: any of hn, se, reddit,
     github, petitions, nyc311, scholar. The public free-tier request budget may limit source jobs; check queries_planned,
-    queries_run, queries_succeeded, queries_timed_out, queries_cancelled_before_start and each source's coverage flags. se_sites: Stack Exchange sites.
+    queries_budgeted, queries_run, queries_succeeded, queries_timed_out, queries_cancelled_before_start and each source's coverage flags.
+    Default research reserves part of the same 16-job cap for a fallback pass when initial evidence is thin. se_sites: Stack Exchange sites.
     Cached 36h; refresh=True re-runs.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
