@@ -242,14 +242,24 @@ def query_variants(problem: str) -> list[str]:
 # exact same wording. This is intentionally conservative on the small free tier.
 _CONSTRAINT_GROUPS = (
     (
-        "offline/local operation",
-        re.compile(r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bon[- ]device\b|\bon device\b", re.I),
-        re.compile(r"\boffline\b|\bwithout (?:an? )?internet\b|\bno[- ]internet\b|\bno network\b|\bwithout (?:a )?network\b|\bon[- ]device\b|\bon device\b|\bfully local\b|\blocal (?:ai|model|llm|inference)\b|\bruns? locally\b|\bair[- ]gapped\b", re.I),
+        "offline operation",
+        re.compile(r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b", re.I),
+        re.compile(r"\boffline\b|\bwithout (?:an? )?internet\b|\bno[- ]internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bworks? without (?:an? )?internet\b", re.I),
+    ),
+    (
+        "on-device/local execution",
+        re.compile(r"\bon[- ]device\b|\blocal\b", re.I),
+        re.compile(r"\bon[- ]device\b|\bon device\b|\bfully local\b|\blocal (?:ai|model|llm|inference)\b|\bruns? locally\b|\bair[- ]gapped\b", re.I),
     ),
     (
         "low-resource hardware",
         re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b", re.I),
         re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b|\bolder (?:phones?|devices?)\b|\bold (?:phones?|devices?)\b|\bsmall (?:phones?|devices?)\b|\bbudget phones?\b|\b[1248] ?gb ram\b|\b2 ?gb memory\b", re.I),
+    ),
+    (
+        "affordability",
+        re.compile(r"\blow[- ]cost\b|\baffordable\b|\bcheap\b|\bbudget[- ]friendly\b|\bno[- ]cost\b|\bfree\b", re.I),
+        re.compile(r"\blow[- ]cost\b|\baffordable\b|\bcheap\b|\bbudget[- ]friendly\b|\bno[- ]cost\b|\bfree\b|\bunder \$\s?\d+\b|\bcosts? (?:less|under)\b|\bfree tier\b|\bfree to use\b", re.I),
     ),
     (
         "Android platform",
