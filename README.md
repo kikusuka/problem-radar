@@ -56,7 +56,10 @@ community-discovery query and one complaint query, while GitHub issue and reposi
 When Reddit OAuth must obtain a new access token, that token request also consumes one unit, so the first
 call uses a single Reddit data search rather than exceeding the two-request cap. A configured OAuth failure does
 not silently switch to anonymous Reddit access. arXiv requests are spaced by at least three seconds process-wide.
-There are no automatic web-search fallbacks, quota-exhaustion retries, or paid-provider substitutions.
+GitHub Search, OpenAlex, Stack Exchange, openFDA and NYC 311 use conservative refill rates based on their public
+or free-key allowances. The optional free `NYC311_APP_TOKEN` gives the NYC civic connector its own Socrata app
+pool; it does not require configuring billing. There are no automatic web-search fallbacks, quota-exhaustion
+retries, or paid-provider substitutions.
 
 Across concurrent calls in one server process, shared no-wait provider token buckets allow a burst of two HTTP
 requests per provider and refill at provider-specific intervals (for example, two seconds for Reddit, Stack Exchange,
@@ -234,5 +237,5 @@ invisible to the built-in sources).
 
 - Posts show complaints, not proven demand. Talk to 5 real people before you commit.
 - Online sources skew English-speaking and online. People without a voice online are under-represented.
-- Free API quotas are shared and limited; no public API should be described as unlimited. The server caps provider requests per tool call, avoids automatic retries and fallbacks, and caches successful research for 36 hours. The in-memory/disk cache is not durable shared storage on ephemeral hosts.
+- Free API quotas are shared and limited; no public API should be described as unlimited. The server caps each tool call and also uses a process-local no-wait limiter with provider-specific refill rates and cooldowns after rate limits. The limiter resets when the process restarts and is not a durable daily quota across multiple instances. Optional free keys can provide a separate app quota but still must stay within provider terms. There are no automatic retries or provider fallbacks. Successful research is cached for 36 hours; the in-memory/disk cache is not durable shared storage on ephemeral hosts.
 - Check each platform's terms before publishing widely.
