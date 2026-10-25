@@ -390,7 +390,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
             continue
         title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
         score = heat(text, p.score, p.comments) + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
-        about = structured or paper or p.source in WEB or is_focused(terms, p.title, text)
+        about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
         if not about or not topic_match:
             if rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms):
                 misses.append((score, p, rel, text))
@@ -568,7 +568,7 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
         text = _body(p)
         terms = [term for term in (niche, problem) if term]
         rel = max((relevance(term, text) for term in terms), default=0.0)
-        if rel < 0.3 or not any(is_relevant(term, text) for term in terms):
+        if rel < 0.3:
             continue
         item = _compact(p, rel, text)
         if solution_re.search(text):
