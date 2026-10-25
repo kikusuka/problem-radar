@@ -273,11 +273,53 @@ _CONSTRAINT_GROUPS = (
     ),
 )
 
+_CONSTRAINT_DENIALS = {
+    "offline operation": re.compile(
+        r"\b(?:online[- ]only|cloud[- ]only)\b|"
+        r"\b(?:requires?|needs?)\s+(?:an?\s+)?(?:internet|network|connection)\b|"
+        r"\b(?:not|never|isn't|is not|doesn't run|does not run|cannot run|can't run|won't work|doesn't work)\b.{0,30}\boffline\b",
+        re.I,
+    ),
+    "on-device/local execution": re.compile(
+        r"\b(?:cloud[- ]based only|remote[- ]only|server[- ]only)\b|"
+        r"\b(?:not|isn't|is not|doesn't run|does not run|cannot run|can't run)\b.{0,35}\b(?:on[- ]device|locally|local inference)\b",
+        re.I,
+    ),
+    "low-resource hardware": re.compile(
+        r"\b(?:not suitable|not designed|doesn't run|does not run|won't run|cannot run|can't run)\b.{0,40}\b(?:low[- ]end|low[- ]ram|low[- ]memory|entry[- ]level|budget phones?)\b|"
+        r"\b(?:flagship|high[- ]end)\b.{0,20}\b(?:only|required|minimum)\b|"
+        r"\b(?:requires?|needs?)\s+(?:at least\s+)?(?:8|12|16)\s?gb\s+(?:of\s+)?(?:ram|memory)\b",
+        re.I,
+    ),
+    "affordability": re.compile(
+        r"\b(?:not|isn't|is not|never)\s+(?:free|cheap|affordable)\b|"
+        r"\btoo expensive\b|\bnot affordable\b|\bpaid only\b|\bsubscription required\b",
+        re.I,
+    ),
+    "Android platform": re.compile(
+        r"\b(?:not supported|unsupported|not available|unavailable|doesn't run|does not run|not for)\b.{0,25}\bandroid\b|"
+        r"\bandroid\b.{0,15}\b(?:unsupported|not supported)\b",
+        re.I,
+    ),
+    "iOS platform": re.compile(
+        r"\b(?:not supported|unsupported|not available|unavailable|doesn't run|does not run|not for)\b.{0,25}\b(?:ios|iphone|ipad)\b|"
+        r"\b(?:ios|iphone|ipad)\b.{0,15}\b(?:unsupported|not supported)\b",
+        re.I,
+    ),
+}
+
 
 def missing_constraints(query: str, text: str) -> list[str]:
     """Return explicit user constraints not evidenced by the candidate text."""
-    return [label for label, query_re, text_re in _CONSTRAINT_GROUPS
-            if query_re.search(query or "") and not text_re.search(text or "")]
+    missing = []
+    candidate = text or ""
+    for label, query_re, text_re in _CONSTRAINT_GROUPS:
+        if not query_re.search(query or ""):
+            continue
+        denial = _CONSTRAINT_DENIALS.get(label)
+        if not text_re.search(candidate) or (denial and denial.search(candidate)):
+            missing.append(label)
+    return missing
 
 
 def constraints_match(query: str, text: str) -> bool:
