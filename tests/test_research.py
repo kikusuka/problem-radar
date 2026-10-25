@@ -433,7 +433,7 @@ def test_fda_devices_turns_adverse_events_into_posts(monkeypatch):
 
 
 def test_fda_devices_no_match_is_empty_not_failure(monkeypatch):
-    monkeypatch.setattr(S, "_get", lambda *a, **k: (None, "HTTP 404 from openFDA"))
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (None, "HTTP 404 from openfda"))
     res = S.fda_devices("zzzz", 5)
     assert res.ok and res.posts == []
 
