@@ -139,9 +139,23 @@ _PROMO_CTA = re.compile(
 
 # Evidence labels are lightweight, inspectable heuristics—not truth labels.
 _FAILURE_CONTEXT = re.compile(
-    r"\b(?:crash(?:es|ed|ing)?|out[-\s]?of[-\s]?memory|oom|memory leak|"
-    r"freez(?:e|es|ing|en)?|hangs?|hung|fails? to load|doesn't work|does not work|"
-    r"not working|bug|error|broken|unusable)\b",
+    # Strong failure evidence, not generic mentions of "bug", "error", or "crash"
+    # embedded in an educational post or a description of a product feature.
+    r"\b(?:keeps? crashing|crash(?:es|ed|ing)?\s+(?:when|after|on|during|because|with|at)|"
+    r"freez(?:e|es|ing|en)?\s+(?:when|after|on|during|because|with|at)|"
+    r"hangs?\s+(?:when|after|on|during|because|with|at)|hung\s+(?:when|after|on|during)|"
+    r"out[-\s]?of[-\s]?(?:memory|ram)|oom|memory leak|not enough ram|"
+    r"failed to allocate|fatal exception|stack trace|steps to reproduce|"
+    r"(?:my|our|this|the app|the application|the model|the runtime|the device|the process|it)\b.{0,45}"
+    r"\b(?:crashes|crashed|crashing|freezes|freezing|hangs|hung|fails to load|doesn't work|does not work)|"
+    r"(?:crash|freez|hang|fail(?:ure)? to load)\w*\s+(?:bug|issue|report|problem))\b",
+    re.IGNORECASE,
+)
+_TUTORIAL_TITLE = re.compile(
+    r"^\s*(?:everything i learned|what i learned|lessons learned|guide to\b|"
+    r"a practical guide\b|tutorial\b|walkthrough\b|deep dive into\b|"
+    r"getting started with\b|how to (?:build|run|deploy|use|integrate|implement|create|install)\b|"
+    r"building .{1,100}\binto\b|from scratch:\s)",
     re.IGNORECASE,
 )
 _WORKAROUND_CONTEXT = re.compile(
@@ -215,6 +229,10 @@ def signal_profile(text: str, max_matches: int = 8) -> dict:
 
     if promotional:
         evidence_kind = "product_announcement"
+    # Artifact type comes before technical vocabulary: tutorials often mention bugs,
+    # crashes, memory errors, or lessons learned without reporting a user's complaint.
+    elif _TUTORIAL_TITLE.search(text):
+        evidence_kind = "technical_tutorial"
     # A launch/demo-style title is stronger evidence of a solution showcase than
     # failure vocabulary embedded later in its description (e.g. "fallback when it
     # wedges"). Classify the artifact being presented before its feature/problem terms.
