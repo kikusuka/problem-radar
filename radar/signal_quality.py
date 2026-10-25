@@ -117,15 +117,22 @@ _COMPILED = {
     for tier, phrases in SIGNAL_PHRASES.items()
 }
 
-# Borrowed concept: require both maker language and a call to action before
-# marking a result promotional. A maker post can still contain real evidence.
+# Detect product promotion without mistaking ordinary first-person complaints for ads.
+# Some launch announcements avoid "I/we built" and use an announcement + download CTA.
 _PROMO_TRIGGER = re.compile(
     r"\b(?:i|we)\s+(?:built|made|created|designed|developed|founded|launched)\b",
     re.IGNORECASE,
 )
+_PROMO_ANNOUNCEMENT = re.compile(
+    r"\b(?:excited to announce|huge news|big milestone|pleased to announce|"
+    r"officially approved|now live|just launched|new release|available to download|"
+    r"live on (?:the )?(?:apple )?app store)\b",
+    re.IGNORECASE,
+)
 _PROMO_CTA = re.compile(
     r"\b(?:check it out|happy to share|beta|launching|sign up|try it(?: out)?|"
-    r"give it a try|feedback welcome|open beta|available now|join the waitlist)\b",
+    r"give it a try|feedback welcome|open beta|available now|join the waitlist|"
+    r"download(?: it| directly)?(?: now)?|get it on|app store|google play)\b",
     re.IGNORECASE,
 )
 
@@ -133,7 +140,10 @@ _PROMO_CTA = re.compile(
 def signal_profile(text: str, max_matches: int = 8) -> dict:
     """Return concise, transparent phrase evidence and a capped ranking bonus."""
     text = text or ""
-    promotional = bool(_PROMO_TRIGGER.search(text) and _PROMO_CTA.search(text))
+    promotional = bool(
+        (_PROMO_TRIGGER.search(text) and _PROMO_CTA.search(text))
+        or (_PROMO_ANNOUNCEMENT.search(text) and _PROMO_CTA.search(text))
+    )
     found: list[tuple[int, str, str, str]] = []
     seen: set[tuple[str, str]] = set()
 
