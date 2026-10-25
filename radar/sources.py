@@ -22,6 +22,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from threading import Lock
+from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -29,6 +30,96 @@ import httpx
 UA = "problem-radar/0.2 (open-source research tool)"
 TIMEOUT = 12.0
 TAGS = re.compile(r"<[^>]+>")
+
+# Cross-call shared per-process request budgets. This is a no-wait token bucket:
+# each provider can absorb a burst of two calls, then refills gradually. It prevents
+# concurrent MCP visitors from turning each per-call cap into an upstream burst.
+# The bucket is intentionally conservative and is not a replacement for each API's
+# own quota headers or a durable limiter across multiple server instances.
+_REQUEST_BUDGET_LOCK = Lock()
+_REQUEST_BURST = 2.0
+_REQUEST_BUCKETS: dict[str, dict[str, float]] = {}
+_REQUEST_INTERVALS = {
+    "github": 2.0 if os.environ.get("GITHUB_TOKEN", "").strip() else 6.0,
+    "reddit": 2.0,
+    "stackexchange": 2.0,
+    "gitlab": 2.0,
+    "hn": 1.0,
+    "openalex": 1.0,
+    "europepmc": 1.0,
+    "bluesky": 1.0,
+    "openfda": 1.0,
+    "petitions": 1.0,
+    "nyc311": 1.0,
+}
+
+
+def _provider_for_url(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if host == "api.github.com" or host.endswith(".github.com"):
+        return "github"
+    if host == "api.stackexchange.com":
+        return "stackexchange"
+    if host == "oauth.reddit.com" or host.endswith("reddit.com"):
+        return "reddit"
+    if host == "gitlab.com" or host.endswith(".gitlab.com"):
+        return "gitlab"
+    if host == "hn.algolia.com":
+        return "hn"
+    if host == "api.openalex.org" or host.endswith(".openalex.org"):
+        return "openalex"
+    if host.endswith("europepmc.org"):
+        return "europepmc"
+    if host == "public.api.bsky.app":
+        return "bluesky"
+    if host == "api.fda.gov":
+        return "openfda"
+    if host.endswith("petition.parliament.uk"):
+        return "petitions"
+    if host == "data.cityofnewyork.us":
+        return "nyc311"
+    return host or "unknown"
+
+
+def _bucket(provider: str, now: float) -> dict[str, float]:
+    state = _REQUEST_BUCKETS.get(provider)
+    if state is None:
+        state = {"tokens": _REQUEST_BURST, "updated": now, "blocked_until": 0.0}
+        _REQUEST_BUCKETS[provider] = state
+    return state
+
+
+def _take_request_budget(url: str) -> str:
+    """Return an explanation if a shared call should be skipped; never sleeps or retries."""
+    provider = _provider_for_url(url)
+    interval = _REQUEST_INTERVALS.get(provider, 1.0)
+    now = time.monotonic()
+    with _REQUEST_BUDGET_LOCK:
+        state = _bucket(provider, now)
+        if now < state["blocked_until"]:
+            return f"shared provider cooldown active for {provider}; no upstream request sent"
+        elapsed = max(0.0, now - state["updated"])
+        state["tokens"] = min(_REQUEST_BURST, state["tokens"] + elapsed / interval)
+        state["updated"] = now
+        if state["tokens"] < 1.0:
+            return f"shared provider request budget depleted for {provider}; no upstream request sent"
+        state["tokens"] -= 1.0
+        return ""
+
+
+def _cooldown_provider(url: str, retry_after: str | None) -> None:
+    provider = _provider_for_url(url)
+    try:
+        delay = float(retry_after) if retry_after else 30.0
+    except (TypeError, ValueError):
+        delay = 30.0
+    delay = max(1.0, min(delay, 300.0))
+    now = time.monotonic()
+    with _REQUEST_BUDGET_LOCK:
+        state = _bucket(provider, now)
+        state["blocked_until"] = max(state["blocked_until"], now + delay)
+        state["tokens"] = 0.0
+        state["updated"] = now
 
 
 @dataclass
@@ -65,7 +156,10 @@ def _iso(epoch) -> str:
 
 
 def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
-    """Returns (json, error_string)."""
+    """Returns (json, error_string). Enforces shared provider budgets without retries."""
+    budget_error = _take_request_budget(url)
+    if budget_error:
+        return None, budget_error
     try:
         r = httpx.request(
             method,
@@ -78,7 +172,8 @@ def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
             follow_redirects=True,
         )
         if r.status_code == 429:
-            return None, "rate limited (429)"
+            _cooldown_provider(url, r.headers.get("Retry-After"))
+            return None, "rate limited (429); provider cooldown applied, no retry attempted"
         if r.status_code in (401, 403):
             return None, f"blocked or unauthorized ({r.status_code})"
         r.raise_for_status()
