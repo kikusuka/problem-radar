@@ -599,6 +599,20 @@ def _rank(posts: list[S.Post], niche, require_pain: bool = True, enforce_constra
     return ranked, misses
 
 
+def _product_lead_topic_match(query: str, text: str, title: str) -> bool:
+    """Let a relevant solution lead remain inspectable even when it lacks the queried failure cue."""
+    if topic_fit(query, text, title):
+        return True
+    softened = re.sub(
+        r"\b(?:crash(?:es|ed|ing)?|oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|"
+        r"memory exhaustion|not enough ram|memory leak|freez(?:e|es|ing|en)?|hangs?|hung|"
+        r"fails? to load|failure to load|battery drain)\b",
+        " ", query, flags=re.I,
+    )
+    softened = re.sub(r"\s+", " ", softened).strip()
+    return bool(softened and softened.casefold() != query.casefold() and topic_fit(softened, text, title))
+
+
 def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enforce_constraints: bool = True):
     ranked, misses = [], []
     for p in _dedupe(posts):
@@ -643,7 +657,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         # to surface complaints rather than marketing copy.
         product_lead = profile["promotional"] or profile["evidence_kind"] == "solution_showcase"
         if product_lead and not structured and not paper:
-            topic_related = any(topic_fit(t, text, p.title) for t in topic_terms)
+            topic_related = any(_product_lead_topic_match(t, text, p.title) for t in topic_terms)
             if topic_related and (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)):
                 title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
                 lead_score = heat(text, p.score, p.comments) + 3 * rel + title_hit - 6.0
