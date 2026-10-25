@@ -161,6 +161,7 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         status[j.source]["jobs"] += 1
     posts: list[S.Post] = []
     futs = {}
+    submitted_by_source = {source: 0 for source in status}
     for j in jobs:
         st = status[j.source]
         if not _SOURCE_SLOTS.acquire(blocking=False):
@@ -177,6 +178,7 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         # slot while its source call is still consuming a worker.
         future.add_done_callback(lambda _future: _SOURCE_SLOTS.release())
         futs[future] = j
+        submitted_by_source[j.source] += 1
 
     done = set()
     try:
@@ -202,16 +204,14 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         if f not in done:
             f.cancel()  # queued tasks can be cancelled; running threads retain their slot
             status[j.source]["errors"].append("timed out")
-    for st in status.values():
+    for source, st in status.items():
         st["errors"] = sorted(set(st["errors"]))[:3]
-        if st["skipped"] and not st["ok"]:
+        if (st["skipped"] and not st["ok"]) or (st["capacity_limited"] and not submitted_by_source[source]):
             st["state"] = "skipped"
         elif st["ok"] == st["jobs"] and not st["capacity_limited"]:
             st["state"] = "ok"
         elif st["ok"]:
             st["state"] = "partial"
-        elif st["capacity_limited"] and not futs:
-            st["state"] = "skipped"
         else:
             st["state"] = "failed"
     return posts, status
