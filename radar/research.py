@@ -1063,20 +1063,22 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
         "willingness_to_pay_signals": [],
         "workaround_signals": [],
     }
-    terms = list(dict.fromkeys([*variants, niche]))
-    terms = [term for term in terms if term]
+    terms = list(dict.fromkeys([primary] + [
+        term for term in [*variants[1:], niche]
+        if term and topic_alternate_shares_anchor(primary, term)
+    ]))
+
     def sentence_is_about_problem(sentence: str) -> bool:
-        # Hard requirements are checked once against the whole candidate document below.
-        # Requiring every constraint in each individual sentence drops real evidence when
-        # the title or another sentence supplies the platform/offline/resource details.
+        # Payment/workaround language must be in a sentence tied to the subject, not
+        # merely in a document that happens to contain words like "no" or "internet".
         return any(relevance(term, sentence, loose=True) > 0 for term in terms)
 
     for p in _dedupe(raw):
         text = _body(p)
         rel = max((relevance(term, text) for term in terms), default=0.0)
-        # A result must be about the target, not merely contain a solution/payment
-        # keyword somewhere in an otherwise unrelated document.
-        if rel < 0.3 or not constraints_match(problem, text):
+        # The document must match the requested topic and demonstrate the explicit
+        # constraints; loose word overlap alone is not enough.
+        if not topic_fit_with_alternates(problem, terms[1:], text, p.title) or not constraints_match(problem, text):
             continue
         sentences = ([clean(p.title)] if p.title else []) + re.split(r"(?<=[.!?])\s+", clean(p.text or ""))
         relevant_sentences = [sentence for sentence in sentences if sentence and sentence_is_about_problem(sentence)]
@@ -1142,10 +1144,19 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
             "validate demand, willingness to pay, or market size."
         )
 
+    provider_request_counts = getattr(status, "provider_request_counts", {})
     return {
         "problem": problem,
         "lens": lens,
         "searched_as": variants,
+        "queries_planned": len(jobs),
+        "queries_budgeted": len(budgeted_jobs),
+        "scheduled_queries": scheduled_intents,
+        "provider_request_units_budgeted": sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in budgeted_jobs)
+            + sum(S.startup_request_cost(provider) for provider in {SOURCE_PROVIDER_GROUP.get(j.source, j.source) for j in budgeted_jobs}),
+        "provider_request_units_used": sum(provider_request_counts.values()),
+        "provider_request_counts": provider_request_counts,
+        "provider_request_denials": getattr(status, "provider_request_denials", {}),
         "required_constraints": missing_constraints(problem, ""),
         "coverage": status,
         "evidence_status": evidence_status,
