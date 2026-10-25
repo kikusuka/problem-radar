@@ -726,6 +726,40 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
     return ranked, misses
 
 
+def _supporting_evidence(niche: str, alternates: list[str], misses: list, limit: int = 6) -> list[dict]:
+    """Keep strong topical pain evidence visible when it misses a hard requirement.
+
+    These are not qualifying top results and do not count toward the problem/evidence
+    totals. They are a separate, clearly labelled tier so strict constraint checks do
+    not turn useful partial evidence into an opaque zero-result response.
+    """
+    out = []
+    seen = set()
+    for score, post, rel, text in misses:
+        missing = missing_constraints(niche, _body(post))
+        if not missing or post.url in seen:
+            continue
+        if not topic_fit_with_alternates(niche, alternates, text, post.title):
+            continue
+        profile = signal_profile(text)
+        if profile["promotional"] or profile["evidence_kind"] in {
+            "solution_showcase", "technical_tutorial", "vendor_editorial"
+        }:
+            continue
+        if post.source not in STRUCTURED and post.source not in PAPERS and not looks_like_pain(text):
+            continue
+        item = _compact(post, rel, text)
+        item["missing_constraints"] = missing
+        item["evidence_type"] = EVIDENCE_TYPE.get(post.source, "reported_need")
+        item["qualification_note"] = (
+            "Related evidence for the underlying topic; not counted as a qualifying result because it does not demonstrate every explicit requirement."
+        )
+        out.append((score, item))
+        seen.add(post.url)
+    out.sort(key=lambda item: item[0], reverse=True)
+    return [item for _, item in out[:limit]]
+
+
 def _diversify(ranked: list, limit: int) -> list:
     """No single source fills more than about 40% of the list, so one noisy or bulky source cannot bury the rest."""
     cap = max(3, -(-limit * 2 // 5))
@@ -776,6 +810,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     raw, status = run_jobs(jobs)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
+    supporting_evidence = _supporting_evidence(niche, also, misses)
+    supporting_urls = {item["url"] for item in supporting_evidence}
     ranked = _diversify(ranked, limit)
     provider_request_counts = getattr(status, "provider_request_counts", {})
     payload = {
@@ -796,6 +832,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "queries_cancelled_before_start": sum(st["cancelled_before_start"] for st in status.values()),
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
+        "supporting_evidence_count": len(supporting_evidence),
+        "supporting_evidence": supporting_evidence,
         "searched_terms": [niche] + also,
         "query_variants_scheduled": list(dict.fromkeys(j.query for j in budgeted_jobs)),
         "required_constraints": missing_constraints(niche, ""),
@@ -828,8 +866,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                     else "related candidate did not clear the complete relevance or hard-constraint checks"
                 ),
             }
-            for _, p, _, _ in misses[:8]
-        ]
+            for _, p, _, _ in misses if p.url not in supporting_urls
+        ][:8]
         payload["near_misses_note"] = ("These candidates did not qualify as top results. Some may lack hard requirements, use different wording, "
                                        "or be promotional product leads rather than independent complaint evidence. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
@@ -838,10 +876,17 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         payload["region_note"] = R.coverage_note(reg, list(status))
     payload["llm_web_search_suggestions"] = web_suggestions(niche, lens, reg)  # your own search tool covers shops, reviews and news
     if not kept:
-        payload["note"] = (
-            "No qualifying complaints survived the current relevance and constraint checks. This is not evidence that the problem does not exist. "
-            "Read search_diagnostics and coverage to distinguish a genuine zero-result search from request limits or source failures; inspect near_misses and try a constraint-preserving alternate wording."
-        )
+        if supporting_evidence:
+            payload["note"] = (
+                f"No candidate demonstrated every explicit requirement, so top_posts remains empty. "
+                f"{len(supporting_evidence)} related pain-evidence item(s) are available in supporting_evidence with their missing_constraints shown. "
+                "They support investigating the broader topic but do not prove the full constrained problem."
+            )
+        else:
+            payload["note"] = (
+                "No qualifying complaints survived the current relevance and constraint checks. This is not evidence that the problem does not exist. "
+                "Read search_diagnostics and coverage to distinguish a genuine zero-result search from request limits or source failures; inspect near_misses and try a constraint-preserving alternate wording."
+            )
     if cacheable and kept:
         _save(key, payload)
     return payload
