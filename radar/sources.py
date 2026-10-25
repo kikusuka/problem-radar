@@ -331,7 +331,7 @@ _ARXIV_NS = "{http://www.w3.org/2005/Atom}"
 
 
 def arxiv(query: str, limit: int = 20, **_) -> Result:
-    """Search arXiv abstracts. One request per query, globally spaced by at least 3 seconds."""
+    """Search arXiv abstracts; one query at a time and at least three seconds between HTTP requests."""
     global _arxiv_last_request
     safe_query = re.sub("[^A-Za-z0-9 ._-]", " ", query)[:180].strip()
     params = {
@@ -343,9 +343,9 @@ def arxiv(query: str, limit: int = 20, **_) -> Result:
     }
     try:
         with _ARXIV_LOCK:
-            wait = 3.0 - (time.monotonic() - _arxiv_last_request)
-            if _arxiv_last_request and wait > 0:
-                time.sleep(wait)
+            now = time.monotonic()
+            if _arxiv_last_request and now - _arxiv_last_request < 3.0:
+                return Result([], True, "deferred to honor arXiv's three-second request spacing; no retry attempted", skipped=True)
             try:
                 response = httpx.get(
                     "https://export.arxiv.org/api/query",
@@ -353,13 +353,15 @@ def arxiv(query: str, limit: int = 20, **_) -> Result:
                     timeout=TIMEOUT,
                     headers={"User-Agent": UA},
                 )
-            finally:
+            except Exception as e:
                 _arxiv_last_request = time.monotonic()
+                return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
+            _arxiv_last_request = time.monotonic()
     except Exception as e:
         return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
 
     if response.status_code == 429:
-        return Result([], False, "rate limited (429); arXiv requests are spaced at least 3 seconds; no retry attempted")
+        return Result([], False, "rate limited (429); no retry attempted")
     if response.status_code >= 400:
         return Result([], False, f"arXiv HTTP {response.status_code}")
     try:
