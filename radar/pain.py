@@ -483,8 +483,9 @@ _TOPIC_CONSTRAINT_WORDS = {
     "local", "on-device", "device", "fully", "cloud", "remote", "server-only",
     "low-end", "low-ram", "low-memory", "low-resource", "low-cost", "low-spec",
     "entry-level", "limited", "affordable", "cheap", "budget", "privacy-first",
-    "private", "privacy", "device", "devices", "android", "ios", "iphone", "ipad", "windows",
-    "linux", "macos", "chromeos", "no-internet", "no-network",
+    "private", "privacy", "device", "devices", "phone", "phones", "smartphone", "smartphones",
+    "mobile", "mobiles", "android", "ios", "iphone", "ipad", "windows", "linux", "macos",
+    "chromeos", "no-internet", "no-network",
 }
 _TOPIC_ALIAS_GROUPS = {
     "ai_language_model": {
@@ -518,20 +519,42 @@ _TOPIC_ALIAS_GROUPS = {
 _TOPIC_ALIAS_INDEX = {}
 for _group, _aliases in _TOPIC_ALIAS_GROUPS.items():
     for _alias in _aliases:
-        _TOPIC_ALIAS_INDEX[_alias] = _group
-        # Query wording often gives only one word of a known phrase ("language model").
-        # Map non-generic component words to the same anchor group as the full alias.
-        if " " in _alias:
-            for _part in _alias.split():
-                _TOPIC_ALIAS_INDEX.setdefault(_part, _group)
+        # Only unambiguous single-word aliases belong in the token index. Mapping every
+        # component of "language model" made "local language" look like an AI query.
+        # Multiword aliases are recognized as complete phrases in _topic_groups().
+        if " " not in _alias:
+            _TOPIC_ALIAS_INDEX[_alias] = _group
 
 
 def _topic_groups(query: str) -> list[tuple[str, str]]:
-    """Return distinct topic anchors while stripping generic and constraint-only terms."""
-    tokens = re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", (query or "").lower())
+    """Return topic anchors without confusing a word inside a phrase for a topic by itself."""
+    text = (query or "").lower()
+    token_matches = list(re.finditer(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", text))
+    phrase_spans: list[tuple[int, int]] = []
     groups: list[tuple[str, str]] = []
     seen: set[str] = set()
-    for index, token in enumerate(tokens):
+
+    # Match full multiword aliases first. Their component words must not also become
+    # free-standing anchors: "language model" is meaningful, "local language" is not.
+    phrase_aliases = sorted(
+        ((group, alias) for group, aliases in _TOPIC_ALIAS_GROUPS.items()
+         for alias in aliases if " " in alias),
+        key=lambda item: len(item[1]),
+        reverse=True,
+    )
+    for group, alias in phrase_aliases:
+        pattern = r"\b" + r"\s+".join(re.escape(part) for part in alias.lower().split()) + r"\b"
+        for match in re.finditer(pattern, text):
+            phrase_spans.append((match.start(), match.end()))
+            if group not in seen:
+                groups.append((group, group))
+                seen.add(group)
+
+    tokens = [m.group(0) for m in token_matches]
+    for index, match in enumerate(token_matches):
+        if any(start <= match.start() and match.end() <= end for start, end in phrase_spans):
+            continue
+        token = match.group(0)
         if token in STOP_WORDS or token in _TOPIC_GENERIC or token in _TOPIC_CONSTRAINT_WORDS:
             continue
         if token in {"ram", "memory", "resources", "resource"} and index:
@@ -618,3 +641,28 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
     # Retain the broad overlap threshold for other query words, but don't let
     # generic/platform/failure anchors compensate for a missing domain concept.
     return matched >= max(1, math.ceil(0.6 * len(groups)))
+
+
+def topic_core_query(query: str) -> str:
+    """Extract the subject for solution discovery while checking hard constraints separately.
+
+    This helper is for candidate retrieval, not complaint qualification: a relevant
+    product may omit details such as offline operation or low-RAM support from its title.
+    Such a candidate must still be labeled as a constraint near-miss after retrieval.
+    """
+    tokens = re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", (query or "").lower())
+    skip = (
+        STOP_WORDS | GENERIC | _TOPIC_GENERIC | _TOPIC_CONSTRAINT_WORDS
+        | {
+            "genuine", "genuinely", "fully", "entirely", "completely", "works", "work",
+            "runs", "run", "running", "without", "access", "paid", "paying", "payment",
+            "api", "apis", "internet", "connection", "required", "requires", "needed",
+            "support", "supported", "supporting", "minimum", "maximum",
+        }
+    )
+    subject = []
+    for token in tokens:
+        if token in skip or token in subject:
+            continue
+        subject.append(token)
+    return " ".join(subject[:8]).strip()
