@@ -311,9 +311,15 @@ PAIN_QUERY = "problem OR struggle OR frustrating OR expensive OR wish OR hate OR
 
 
 def _reddit_json(path: str, params: dict):
+    has_oauth_config = bool(
+        os.environ.get("REDDIT_CLIENT_ID", "").strip()
+        and os.environ.get("REDDIT_CLIENT_SECRET", "").strip()
+    )
     token = _reddit_oauth()
     if token:
         return _get(f"https://oauth.reddit.com/{path}", params, {**_reddit_ua(), "Authorization": f"bearer {token}"})
+    if has_oauth_config:
+        return None, "configured Reddit OAuth unavailable; no anonymous fallback attempted"
     return _get(f"https://www.reddit.com/{path}.json", params, _reddit_ua())
 
 
