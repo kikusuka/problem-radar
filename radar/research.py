@@ -1285,24 +1285,33 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
 
 # ---------------------------------------------------------------- disk cache
 def _load(key: str) -> dict | None:
-    if key in _mem and time.time() - _mem[key]["generated_at"] < CACHE_TTL:
-        return json.loads(json.dumps(_mem[key]))
-    f = RESEARCH_DIR / f"{key}.json"
-    if f.exists():
+    stored = _mem.get(key)
+    if stored is None:
+        f = RESEARCH_DIR / f"{key}.json"
+        if not f.exists():
+            return None
         try:
-            d = json.loads(f.read_text())
-            if time.time() - d.get("generated_at", 0) < CACHE_TTL:
-                _mem[key] = d
-                return json.loads(json.dumps(d))
+            stored = json.loads(f.read_text())
         except Exception:
             return None
-    return None
+
+    ttl = max(1, int(stored.get("__cache_ttl_seconds", CACHE_TTL)))
+    if time.time() - stored.get("generated_at", 0) >= ttl:
+        _mem.pop(key, None)
+        return None
+    _mem[key] = stored
+    result = json.loads(json.dumps(stored))
+    result.pop("__cache_ttl_seconds", None)
+    return result
 
 
-def _save(key: str, payload: dict) -> None:
-    _mem[key] = payload
+def _save(key: str, payload: dict, ttl_seconds: int | None = None) -> None:
+    ttl = max(1, int(ttl_seconds if ttl_seconds is not None else CACHE_TTL))
+    stored = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+    stored["__cache_ttl_seconds"] = ttl
+    _mem[key] = stored
     try:
         RESEARCH_DIR.mkdir(parents=True, exist_ok=True)
-        (RESEARCH_DIR / f"{key}.json").write_text(json.dumps(payload, indent=2))
+        (RESEARCH_DIR / f"{key}.json").write_text(json.dumps(stored, indent=2, ensure_ascii=False))
     except Exception:
-        pass  # read-only filesystems are fine; memory cache still works
+        pass  # read-only filesystems are fine; in-memory cache still works
