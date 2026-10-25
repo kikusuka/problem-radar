@@ -358,7 +358,7 @@ def query_expansions(query: str, max_variants: int = 4) -> list[str]:
     if failure:
         stem = _TECHNICAL_FAILURE_CUE.sub(" ", query)
         stem = re.sub(
-            r"\b(?:error|errors|failure|failures|issue|issues|problem|problems|due|because|with|from|after|when|during|the|an|a|of|to|is|are|and)\b",
+            r"\b(?:error|errors|failure|failures|issue|issues|problem|problems|due|because|with|from|after|when|during|the|an|a|of|to|is|are|and|keep(?:s|ing)?|constantly|always)\b",
             " ", stem, flags=re.I,
         )
         stem = re.sub(r"\s+", " ", stem).strip(" \t\r\n-,:;")
@@ -369,7 +369,7 @@ def query_expansions(query: str, max_variants: int = 4) -> list[str]:
         if re.search(r"\b(?:oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|memory exhaustion|not enough ram|memory leak)\b", low):
             cues.extend(["OOM", '"out of memory"', "low RAM", "memory leak"])
         if re.search(r"\b(?:crash(?:es|ed|ing)?|freez(?:e|es|ing|en)?|hangs?|hung|fails? to load|failure to load)\b", low):
-            cues.extend(["crash", "freezes", "hangs", "fails to load"])
+            cues.extend(["freezes", "hangs", "fails to load", "crash"])
         if re.search(r"\bbattery drain\b", low):
             cues.append("battery drain")
         if not cues:
