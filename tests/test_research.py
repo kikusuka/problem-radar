@@ -1158,11 +1158,11 @@ def test_solution_search_finds_topical_projects_as_constraint_near_misses(monkey
 
 def test_http_errors_do_not_expose_query_terms_or_api_keys(monkeypatch):
     monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
-    request = httpx.Request(
+    request = S.httpx.Request(
         "GET",
         "https://api.openalex.org/works?api_key=secret-test-key&search=private%20research%20topic",
     )
-    response = httpx.Response(500, request=request)
+    response = S.httpx.Response(500, request=request)
     monkeypatch.setattr(S.httpx, "request", lambda *a, **k: response)
 
     data, error = S._get(
