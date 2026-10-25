@@ -21,6 +21,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from threading import Lock
 from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
@@ -40,15 +41,22 @@ _REQUEST_BUDGET_LOCK = Lock()
 _REQUEST_BURST = 2.0
 _REQUEST_BUCKETS: dict[str, dict[str, float]] = {}
 _REQUEST_INTERVALS = {
-    "github": 2.0 if os.environ.get("GITHUB_TOKEN", "").strip() else 6.0,
+    # GitHub Search is stricter than its primary REST quota: stay below 30/min
+    # authenticated and 10/min unauthenticated, including the initial two-call burst.
+    "github": 2.2 if os.environ.get("GITHUB_TOKEN", "").strip() else 7.5,
     "reddit": 2.0,
-    "stackexchange": 2.0,
+    # Conservative daily-budget refill. A free Stack Exchange key allows about
+    # 10,000 requests/day; without one, keep the shared hosted IP much lower.
+    "stackexchange": 9.0 if os.environ.get("STACKEXCHANGE_KEY", "").strip() else 290.0,
     "gitlab": 2.0,
-    "hn": 1.0,
-    "openalex": 1.0,
+    "hn": 2.0,
+    # OpenAlex full-text search is metered against the free daily budget (about
+    # 1,000 searches with a free key, 100 keyless). Do not pace it at 1 req/sec.
+    "openalex": 150.0 if os.environ.get("OPENALEX_API_KEY", "").strip() else 900.0,
     "europepmc": 1.0,
     "bluesky": 1.0,
-    "openfda": 1.0,
+    # openFDA allows 1,000 requests/day without a key and 120,000/day with one.
+    "openfda": 1.0 if os.environ.get("OPENFDA_KEY", "").strip() else 100.0,
     "petitions": 1.0,
     "nyc311": 1.0,
 }
@@ -107,19 +115,70 @@ def _take_request_budget(url: str) -> str:
         return ""
 
 
-def _cooldown_provider(url: str, retry_after: str | None) -> None:
+def _cooldown_delay(url: str, headers) -> float:
+    """Derive provider cooldown from standard headers; fall back conservatively."""
+    provider = _provider_for_url(url)
+    retry_after = headers.get("Retry-After") if headers is not None else None
+    if retry_after:
+        try:
+            return max(1.0, float(retry_after))
+        except (TypeError, ValueError):
+            try:
+                return max(1.0, parsedate_to_datetime(retry_after).timestamp() - time.time())
+            except (TypeError, ValueError, OverflowError):
+                pass
+
+    reset = headers.get("X-RateLimit-Reset") if headers is not None else None
+    if reset:
+        try:
+            reset_value = float(reset)
+            # GitHub uses a UTC epoch timestamp; OpenAlex documents this header as
+            # seconds until the daily budget resets at midnight UTC.
+            delay = reset_value - time.time() if provider == "github" else reset_value if provider == "openalex" else 0.0
+            if delay > 0:
+                return delay
+        except (TypeError, ValueError):
+            pass
+    # Without a usable reset signal, stop making repeated immediate calls.
+    return 3600.0 if provider in {"openalex", "openfda", "stackexchange"} else 60.0
+
+
+def _cooldown_provider(url: str, delay_seconds: float | str | None) -> None:
     provider = _provider_for_url(url)
     try:
-        delay = float(retry_after) if retry_after else 30.0
+        delay = max(1.0, float(delay_seconds)) if delay_seconds is not None else 60.0
     except (TypeError, ValueError):
-        delay = 30.0
-    delay = max(1.0, min(delay, 300.0))
+        delay = 60.0
     now = time.monotonic()
     with _REQUEST_BUDGET_LOCK:
         state = _bucket(provider, now)
         state["blocked_until"] = max(state["blocked_until"], now + delay)
         state["tokens"] = 0.0
         state["updated"] = now
+
+
+def request_limiter_status() -> dict:
+    """Safe operational view of this process's request limiter; contains no credentials."""
+    now = time.monotonic()
+    providers = {}
+    with _REQUEST_BUDGET_LOCK:
+        for provider, state in sorted(_REQUEST_BUCKETS.items()):
+            interval = _REQUEST_INTERVALS.get(provider, 1.0)
+            elapsed = max(0.0, now - state["updated"])
+            tokens = min(_REQUEST_BURST, state["tokens"] + elapsed / interval)
+            cooldown = max(0.0, state["blocked_until"] - now)
+            providers[provider] = {
+                "available_tokens_approx": round(tokens, 2),
+                "refill_interval_seconds": interval,
+                "cooldown_seconds": int(cooldown + 0.999),
+                "blocked": cooldown > 0,
+            }
+    return {
+        "scope": "current process only; resets on restart",
+        "burst_requests_per_provider": int(_REQUEST_BURST),
+        "policy": "non-blocking; no automatic retry; provider 429 applies cooldown",
+        "providers": providers,
+    }
 
 
 @dataclass
@@ -169,11 +228,20 @@ def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
             auth=auth,
             headers={"User-Agent": UA, **(headers or {})},
             timeout=TIMEOUT,
-            follow_redirects=True,
+            follow_redirects=False,  # API adapters are budgeted as one outbound HTTP request
         )
-        if r.status_code == 429:
-            _cooldown_provider(url, r.headers.get("Retry-After"))
-            return None, "rate limited (429); provider cooldown applied, no retry attempted"
+        if r.status_code in (403, 429):
+            remaining = (r.headers.get("X-RateLimit-Remaining") or "").strip()
+            body = (r.text or "").lower()[:1200]
+            rate_limited = (
+                r.status_code == 429
+                or bool(r.headers.get("Retry-After"))
+                or remaining == "0"
+                or any(term in body for term in ("rate limit", "rate-limit", "too many requests", "quota exceeded", "daily limit"))
+            )
+            if rate_limited:
+                _cooldown_provider(url, _cooldown_delay(url, r.headers))
+                return None, f"rate limited ({r.status_code}); provider cooldown applied, no retry attempted"
         if r.status_code in (401, 403):
             return None, f"blocked or unauthorized ({r.status_code})"
         r.raise_for_status()
@@ -220,10 +288,28 @@ def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
         params["key"] = os.environ["STACKEXCHANGE_KEY"]
     data, err = _get("https://api.stackexchange.com/2.3/search/advanced", params)
     if data is None:
-        if "429" in err:
+        if "429" in err or "rate limited" in err.lower():
             _se_cooldown["until"] = time.time() + 120  # stop hammering a limited quota
             err += "; set STACKEXCHANGE_KEY (free) for a much larger quota"
         return Result([], False, err)
+    if data.get("error_id"):
+        error_name = data.get("error_name") or "api_error"
+        message = data.get("error_message") or "Stack Exchange returned an API error"
+        backoff = data.get("backoff")
+        if backoff:
+            try:
+                _se_cooldown["until"] = max(_se_cooldown["until"], time.time() + max(1.0, float(backoff)))
+            except (TypeError, ValueError):
+                pass
+        return Result([], False, f"Stack Exchange API error {data['error_id']} ({error_name}): {message}")
+    # Stack Exchange can return HTTP 200 with a method-level backoff. Honor it
+    # before the next job rather than treating HTTP 200 as unrestricted success.
+    backoff = data.get("backoff")
+    if backoff:
+        try:
+            _se_cooldown["until"] = max(_se_cooldown["until"], time.time() + max(1.0, float(backoff)))
+        except (TypeError, ValueError):
+            pass
     out = []
     for q in data.get("items", []):
         out.append(
