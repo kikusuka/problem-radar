@@ -211,7 +211,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
 
 
 def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
-    status = {j.source: {"jobs": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
+    status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
                          "capacity_limited": False, "request_limited": False} for j in jobs}
     for j in jobs:
         status[j.source]["jobs"] += 1
@@ -240,6 +240,7 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         # slot while its source call is still consuming a worker.
         future.add_done_callback(lambda _future: _SOURCE_SLOTS.release())
         futs[future] = j
+        status[j.source]["submitted"] += 1
         submitted_by_source[j.source] += 1
 
     done = set()
@@ -247,6 +248,7 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         for f in as_completed(futs, timeout=DEADLINE):
             done.add(f)
             st = status[futs[f].source]
+            st["completed"] += 1
             try:
                 res = f.result()
             except Exception as e:
@@ -265,6 +267,7 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
     for f, j in futs.items():
         if f not in done:
             f.cancel()  # queued tasks can be cancelled; running threads retain their slot
+            status[j.source]["timed_out"] += 1
             status[j.source]["errors"].append("timed out")
     for source, st in status.items():
         st["errors"] = sorted(set(st["errors"]))[:3]
@@ -570,7 +573,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "depth": depth,
         "generated_at": int(time.time()),
         "queries_planned": len(jobs),
-        "queries_run": sum(st["ok"] for st in status.values()),
+        "queries_run": sum(st["completed"] for st in status.values()),
+        "queries_succeeded": sum(st["ok"] for st in status.values()),
+        "queries_timed_out": sum(st["timed_out"] for st in status.values()),
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
         "searched_terms": [niche] + also,
