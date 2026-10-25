@@ -491,7 +491,7 @@ def fda_devices(query: str, limit: int = 20, **_) -> Result:
         params["api_key"] = os.environ["OPENFDA_KEY"]
     data, err = _get("https://api.fda.gov/device/event.json", params)
     if data is None:
-        if err.startswith("HTTP 404 from openFDA"):
+        if err.casefold().startswith("http 404 from openfda"):
             return Result([])  # openFDA answers 404 when nothing matches
         return Result([], False, err)
     out = []
