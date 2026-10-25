@@ -1118,6 +1118,20 @@ def test_cross_source_duplicate_titles_are_collapsed_deterministically():
     assert result[0].source == "hn"
 
 
+def test_partial_topic_match_is_available_for_lead_triage_but_not_strict_match():
+    query = "offline AI assistant for low-end Android phones"
+    related = (
+        "My small language model runs offline on Android phones, but it keeps crashing "
+        "when memory fills. This is frustrating; I have to close other apps to free RAM."
+    )
+    assert not pain.topic_fit(query, related, "Small language model keeps crashing on Android")
+    assert pain.topic_candidate_fit(query, related, "Small language model keeps crashing on Android")
+    assert "assistant" in pain.topic_anchor_gaps(query, related, "Small language model keeps crashing on Android")
+
+    unrelated = "A local project on Android runs well and has a simple user interface."
+    assert not pain.topic_candidate_fit(query, unrelated, "Android project")
+
+
 def test_topic_fit_rejects_generic_overlap_and_accepts_domain_aliases():
     unrelated = "I'm forking Ladybird and stepping down as SerenityOS BDFL. A local project is running."
     related = "A 270M language model runs entirely on a budget Android device."
@@ -1129,6 +1143,29 @@ def test_topic_fit_rejects_generic_overlap_and_accepts_domain_aliases():
 
 def test_technical_failure_language_counts_as_pain():
     assert pain.looks_like_pain("The Android app keeps crashing with an out of memory (OOM) error.")
+
+
+def test_solution_check_returns_partial_topic_candidates_without_calling_them_solutions(monkeypatch):
+    candidate = S.Post(
+        "github_repo", "partial-topic-project", "Small Language Model on Android",
+        "A small language model can run offline on Android phones. Some users report crashes "
+        "on older devices when memory is exhausted.",
+        "https://github.com/example/offline-llm-android", "example", 12, 3, "2026-10-01",
+        {"site": "Python", "archived": False},
+    )
+    monkeypatch.setattr(
+        solved, "run_jobs",
+        lambda jobs: ([candidate], {"github_repo": {"state": "ok", "posts": 1}}),
+    )
+    out = solved.check("offline AI assistant for low-end Android phones", "software")
+
+    assert out["existing_projects"] == []
+    assert out["related_candidate_count"] == 1
+    lead = out["related_candidates"][0]
+    assert lead["url"] == candidate.url
+    assert lead["candidate_kind"] == "existing_project_candidate"
+    assert "assistant" in lead["missing_topic_anchors"]
+    assert out["assessment"]["hint"] != "partially_solved"
 
 
 def test_solution_check_exposes_constraint_near_misses_and_drops_generic_overlap(monkeypatch):
@@ -1150,6 +1187,18 @@ def test_solution_check_exposes_constraint_near_misses_and_drops_generic_overlap
     assert any("Offline AI voice chat" in title for title in titles)
     assert all("Ladybird" not in title for title in titles)
     assert any("low-resource hardware" in p["missing_constraints"] for p in out["constraint_near_misses"])
+
+
+def test_partial_topic_matches_are_near_misses_not_top_complaints():
+    related = S.Post(
+        "hn", "partial-model-anchor", "Small language model keeps crashing on Android",
+        "My small language model runs offline on Android phones, but it keeps crashing "
+        "when memory fills. This is frustrating; I have to close other apps to free RAM.",
+        "https://news.ycombinator.com/item?id=99003", "user", 3, 4, "2026-10-24",
+    )
+    ranked, misses = research._rank([related], ["offline AI assistant for low-end Android phones"])
+    assert ranked == []
+    assert any(p.id == "partial-model-anchor" for _, p, _, _ in misses)
 
 
 def test_promotional_launches_are_near_misses_not_pain_results():
