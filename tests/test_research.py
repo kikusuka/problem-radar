@@ -580,6 +580,14 @@ def test_gitlab_requires_token_and_maps_public_issue(monkeypatch):
     assert result.posts[0].url.endswith("/-/issues/42")
 
 
+def test_gitlab_is_excluded_from_default_search_without_token(monkeypatch):
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+    assert "gitlab" not in {job.source for job in research.plan("offline android assistant", lens="software")}
+
+    monkeypatch.setenv("GITLAB_TOKEN", "unit-test-token")
+    assert "gitlab" in {job.source for job in research.plan("offline android assistant", lens="software")}
+
+
 def test_bluesky_search_uses_public_api_and_maps_posts(monkeypatch):
     calls = {}
 
@@ -963,7 +971,7 @@ def test_research_obeys_provider_and_global_request_budgets_without_fallback(mon
             return S.Result([])
         return run
 
-    sources = ("reddit_community", "reddit", "github", "github_repo", "hn", "se", "bluesky", "arxiv")
+    sources = ("reddit_community", "reddit", "github", "github_repo", "gitlab", "hn", "se", "bluesky", "arxiv")
     monkeypatch.setattr(research, "plan", lambda *args, **kwargs: [
         research.Job(source, f"{source}-{i}") for i in range(10) for source in sources
     ])
