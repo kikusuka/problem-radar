@@ -76,6 +76,17 @@ proof that no solution exists. For `validate_problem`, `evidence_status` disting
 (`paying_signals`) are separate from explicit positive purchase intent (`willingness_to_pay_signals`).
 Neither public posts nor a willingness-to-pay statement alone validates a market.
 
+
+## Retrieval quality and evidence classes
+
+Searches schedule a small number of equivalent queries inside the same source-job and provider-request budgets. `query_variants_scheduled` reports the distinct query strings actually selected for that call. Technical-failure alternatives replace the failure phrase (for example, crash wording with an OOM or freeze equivalent) rather than appending every synonym to an AND-style query. There is no second search phase, paid fallback, or unbounded retry.
+
+Complaint results and solution leads are different kinds of evidence. Results may include an `evidence_kind` such as `technical_failure_report`, `reported_complaint`, `workaround_or_manual_process`, `help_request`, `product_comparison`, `product_announcement`, `solution_showcase`, or `general_discussion`. These labels are transparent heuristics for inspection, not proof that a post is genuine. Promotional announcements and detected solution showcases do not qualify as independent complaint results; relevant leads are kept in `near_misses` where the relevance checks support it.
+
+`search_diagnostics` distinguishes qualifying results, related candidates only, limited coverage, source failures, and completed searches with no qualifying evidence. An empty result is never proof that a problem does not exist.
+
+`evidence_summary` reports the count of qualifying posts, distinct source types, and non-empty source/author-handle pairs. Handles are not identity-verified, cross-posts may exist, and public posts are not a representative survey. Cross-source results are a corroboration clue—not market validation or proof of prevalence.
+
 ## Worldwide by default, local when asked
 
 Leave `region` empty and the search is worldwide. If the person says "I'm in India" or "UK problems", the chatting

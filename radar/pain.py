@@ -328,6 +328,76 @@ def missing_constraints(query: str, text: str) -> list[str]:
     return missing
 
 
+
+
+def query_expansions(query: str, max_variants: int = 4) -> list[str]:
+    """Generate bounded, constraint-preserving lexical alternatives without extra services.
+
+    The original query is always searched separately. Technical-failure alternatives
+    replace the failure wording instead of appending synonyms (which often makes
+    AND-based search engines return nothing). Other alternatives replace one known
+    equivalent at a time, keeping platform and resource constraints in place.
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+    max_variants = max(0, min(max_variants if isinstance(max_variants, int) else 4, 6))
+    if not max_variants:
+        return []
+
+    out: list[str] = []
+
+    def add(candidate: str) -> None:
+        candidate = re.sub(r"\s+", " ", candidate).strip(" \t\r\n-,:;")
+        if candidate and candidate.casefold() != query.casefold() and candidate.casefold() not in {x.casefold() for x in out}:
+            out.append(candidate)
+
+    # Keep every non-failure anchor, including explicit platform/offline/resource
+    # wording, and swap only the technical-failure phrase for a searchable equivalent.
+    failure = _TECHNICAL_FAILURE_CUE.search(query)
+    if failure:
+        stem = _TECHNICAL_FAILURE_CUE.sub(" ", query)
+        stem = re.sub(
+            r"\b(?:error|errors|failure|failures|issue|issues|problem|problems|due|because|with|from|after|when|during|the|an|a|of|to|is|are|and|keep(?:s|ing)?|constantly|always)\b",
+            " ", stem, flags=re.I,
+        )
+        stem = re.sub(r"\s+", " ", stem).strip(" \t\r\n-,:;")
+        if not stem:
+            return []
+        low = query.lower()
+        cues: list[str] = []
+        if re.search(r"\b(?:oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|memory exhaustion|not enough ram|memory leak)\b", low):
+            cues.extend(["OOM", '"out of memory"', "low RAM", "memory leak"])
+        if re.search(r"\b(?:crash(?:es|ed|ing)?|freez(?:e|es|ing|en)?|hangs?|hung|fails? to load|failure to load)\b", low):
+            cues.extend(["freezes", "hangs", "fails to load", "crash"])
+        if re.search(r"\bbattery drain\b", low):
+            cues.append("battery drain")
+        if not cues:
+            cues = ["error", "failure", "bug"]
+        for cue in cues:
+            add(f"{stem} {cue}")
+            if len(out) >= max_variants:
+                break
+        return out[:max_variants]
+
+    # One substitution per query avoids turning synonyms into an overly restrictive
+    # all-terms-must-match search. Each replacement retains the original constraints.
+    replacements = (
+        (r"\bLLMs?\b", "language model"),
+        (r"\bassistants?\b", "chatbot"),
+        (r"\boffline\b", "without internet"),
+        (r"\blow[- ]end\b", "low-RAM"),
+        (r"\blow[- ]ram\b", "memory-constrained"),
+    )
+    for pattern, replacement in replacements:
+        candidate, changed = re.subn(pattern, replacement, query, count=1, flags=re.I)
+        if changed:
+            add(candidate)
+        if len(out) >= max_variants:
+            break
+    return out[:max_variants]
+
+
 def constraints_match(query: str, text: str) -> bool:
     """True when a candidate preserves each hard constraint stated in the query."""
     return not missing_constraints(query, text)
