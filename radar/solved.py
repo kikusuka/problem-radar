@@ -13,7 +13,7 @@ import re
 import time
 
 from . import sources as S
-from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_fit
+from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_anchor_gaps, topic_candidate_fit, topic_fit
 from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
 SOLUTION_RE = re.compile(
@@ -134,12 +134,33 @@ def check(problem: str, lens: str = "software") -> dict:
     projects, discussion, papers, actions = [], [], [], []
     constraint_mismatch_count = 0
     constraint_near_misses: list[tuple[float, dict]] = []
+    related_topic_candidates: list[tuple[float, dict]] = []
     for p in _dedupe(raw):
         text = _body(p)
         rel = max((relevance(variant, text) for variant in variants), default=0.0)
-        # Loose token overlap is only a prefilter. Require subject anchors too, so
-        # generic words like "running", "local", or "project" cannot pass as relevance.
-        if rel < 0.5 or not topic_fit(problem, text, p.title):
+        # Strict topic matches can support the structured solution assessment. Partial
+        # matches are retained separately so a project/paper isn't hidden merely
+        # because its title uses a neighboring term (e.g. "LLM runner" not "assistant").
+        if rel < 0.5:
+            continue
+        strict_topic_match = topic_fit(problem, text, p.title)
+        if not strict_topic_match:
+            if topic_candidate_fit(problem, text, p.title):
+                candidate_kind = (
+                    "existing_project_candidate" if p.source == "github_repo"
+                    else "paper_candidate" if p.source in ("scholar", "arxiv")
+                    else "discussion_candidate"
+                )
+                related_topic_candidates.append((rel, {
+                    "title": p.title[:140],
+                    "url": p.url,
+                    "source": p.source,
+                    "candidate_kind": candidate_kind,
+                    "snippet": (p.text or p.title)[:260],
+                    "missing_topic_anchors": topic_anchor_gaps(problem, text, p.title),
+                    "missing_constraints": missing_constraints(problem, text),
+                    "relevance": round(rel, 2),
+                }))
             continue
         if not constraints_match(problem, text):
             constraint_mismatch_count += 1
@@ -167,10 +188,17 @@ def check(problem: str, lens: str = "software") -> dict:
     sources_ok = sum(1 for s in status.values() if s.get("state") in ("ok", "partial"))
     assessment = assess(projects, papers, actions, lens, discussion, len(raw), sources_ok)
     constraint_near_misses.sort(key=lambda item: item[0], reverse=True)
+    related_topic_candidates.sort(key=lambda item: item[0], reverse=True)
     if not (projects or papers or actions or discussion) and constraint_mismatch_count and assessment["hint"] == "no_clear_solution_found":
         assessment["hint"] = "inconclusive_constraints_not_matched"
         assessment["reasons"] = [f"{constraint_mismatch_count} related candidate(s) did not demonstrate all explicit constraints."]
         assessment["caveat"] += " A candidate was excluded if it did not show the requested offline, hardware/resource or platform constraint; inspect related results and broaden the search before concluding."
+    elif not (projects or papers or actions or discussion) and related_topic_candidates and assessment["hint"] == "no_clear_solution_found":
+        assessment["hint"] = "inconclusive_related_candidates"
+        assessment["reasons"] = [
+            f"{len(related_topic_candidates)} candidate(s) share important topic anchors but do not establish a full topic match. Inspect related_candidates before concluding."
+        ]
+        assessment["caveat"] += " Partial topic matches are shown for inspection only; they do not prove an existing solution fits the full problem or constraints."
     return {
         "problem": problem,
         "lens": lens,
@@ -178,6 +206,8 @@ def check(problem: str, lens: str = "software") -> dict:
         "required_constraints": missing_constraints(problem, ""),
         "constraint_candidates_excluded": constraint_mismatch_count,
         "constraint_near_misses": [item for _, item in constraint_near_misses[:5]],
+        "related_candidate_count": len(related_topic_candidates),
+        "related_candidates": [item for _, item in related_topic_candidates[:8]],
         "coverage": status,
         "assessment": assessment,
         "existing_projects": projects[:8],
