@@ -796,3 +796,18 @@ def test_query_length_is_bounded_before_source_work(monkeypatch):
         research.search("a" * 401)
     with pytest.raises(ValueError, match="400 characters"):
         research.validate("a" * 401)
+
+
+def test_constraint_match_rejects_explicit_contradictions():
+    niche = "offline AI assistant for low-end Android phones"
+    assert not pain.constraints_match(niche, "Android assistant, but cloud-only and requires an internet connection")
+    assert not pain.constraints_match(niche, "Offline Android assistant that requires at least 12 GB RAM")
+    assert not pain.constraints_match("free Android assistant", "Android assistant; subscription required and not free")
+    assert pain.constraints_match(niche, "Fully local inference runs offline on low-end Android phones with 4 GB RAM")
+
+
+def test_denied_android_support_does_not_satisfy_platform_constraint():
+    assert "Android platform" in pain.missing_constraints(
+        "Android app for offline note-taking",
+        "This app is not supported on Android; use the iOS version instead."
+    )
