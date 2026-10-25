@@ -22,13 +22,15 @@ from pathlib import Path
 from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
-from .pain import (gap_cues, HACK_WORDS, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, relevance,
+from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, query_variants, relevance,
                    signals)
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
+MAX_QUERY_CHARS = 400
+MAX_JOBS_PER_REQUEST = 16  # bound one public MCP call so one search cannot monopolize shared source capacity
 
 # One shared pool bounds source work across concurrent MCP requests. Timed-out calls
 # may still be running in Python threads, so never create a fresh pool per request.
@@ -110,6 +112,34 @@ class Job:
     limit: int = 20
 
 
+def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]:
+    """Select a source-diverse subset for one public request.
+
+    Jobs are chosen round-robin by source, preserving each source's own query order.
+    This prevents a single broad/deep request from taking all shared source slots.
+    """
+    if len(jobs) <= limit:
+        return jobs
+    grouped: dict[str, list[Job]] = {}
+    order: list[str] = []
+    for job in jobs:
+        if job.source not in grouped:
+            grouped[job.source] = []
+            order.append(job.source)
+        grouped[job.source].append(job)
+
+    selected: list[Job] = []
+    while len(selected) < limit:
+        progressed = False
+        for source in order:
+            if grouped[source] and len(selected) < limit:
+                selected.append(grouped[source].pop(0))
+                progressed = True
+        if not progressed:
+            break
+    return selected
+
+
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
          lens: str = "any", also: list[str] | None = None, region: dict | None = None) -> list[Job]:
     """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
@@ -156,13 +186,19 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
 
 def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
     status = {j.source: {"jobs": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
-                         "capacity_limited": False} for j in jobs}
+                         "capacity_limited": False, "request_limited": False} for j in jobs}
     for j in jobs:
         status[j.source]["jobs"] += 1
     posts: list[S.Post] = []
     futs = {}
     submitted_by_source = {source: 0 for source in status}
+    selected_jobs = _limit_jobs(jobs)
+    selected_ids = {id(j) for j in selected_jobs}
     for j in jobs:
+        if id(j) not in selected_ids:
+            status[j.source]["request_limited"] = True
+            status[j.source]["errors"].append("per-request source-job budget reached")
+    for j in selected_jobs:
         st = status[j.source]
         if not _SOURCE_SLOTS.acquire(blocking=False):
             st["capacity_limited"] = True
@@ -206,9 +242,9 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
             status[j.source]["errors"].append("timed out")
     for source, st in status.items():
         st["errors"] = sorted(set(st["errors"]))[:3]
-        if (st["skipped"] and not st["ok"]) or (st["capacity_limited"] and not submitted_by_source[source]):
+        if (st["skipped"] and not st["ok"]) or ((st["capacity_limited"] or st["request_limited"]) and not submitted_by_source[source]):
             st["state"] = "skipped"
-        elif st["ok"] == st["jobs"] and not st["capacity_limited"]:
+        elif st["ok"] == st["jobs"] and not st["capacity_limited"] and not st["request_limited"]:
             st["state"] = "ok"
         elif st["ok"]:
             st["state"] = "partial"
@@ -419,6 +455,10 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
             community = False
         if community:
             rel = max(rel, 0.8 if community is True or community == "tight" else 0.6)
+        # Community membership and broad word overlap cannot override hard constraints
+        # explicitly stated by the user (e.g. offline + low-resource + Android).
+        if topic_terms and not constraints_match(topic_terms[0], text):
+            topic_match = False
         structured = p.source in STRUCTURED
         paper = p.source in PAPERS
         if require_pain and paper and gap_cues(text) < 1:
@@ -458,6 +498,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     if not isinstance(niche, str) or not niche.strip():
         raise ValueError("niche must be a non-empty string")
     niche = niche.strip()
+    if len(niche) > MAX_QUERY_CHARS:
+        raise ValueError(f"niche must be at most {MAX_QUERY_CHARS} characters")
     reg = R.resolve(region)
     depth = "deep" if depth == "deep" else "quick"
     lens = lens if lens in LENSES else "any"
@@ -503,6 +545,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
         "searched_terms": [niche] + also,
+        "required_constraints": missing_constraints(niche, ""),
+        "constraint_note": ("Explicit constraints are required for top-post eligibility; near misses identify constraints they do not demonstrate." if missing_constraints(niche, "") else "No hard platform, offline, or low-resource constraint was detected in the query."),
         "coverage": status,
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
         "recurring_themes": themes(kept, niche),
@@ -512,7 +556,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     }
     if len(kept) < 10 and misses:
         payload["near_misses"] = [
-            {"title": p.title[:120], "url": p.url, "source": p.source, "snippet": clean(p.text or p.title)[:160]}
+            {"title": p.title[:120], "url": p.url, "source": p.source, "snippet": clean(p.text or p.title)[:160],
+             "missing_constraints": missing_constraints(niche, _body(p))}
             for _, p, _, _ in misses[:8]
         ]
         payload["near_misses_note"] = ("These matched pain cues but not your exact words. Some are noise; some use other words "
@@ -538,6 +583,8 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
     query = query.strip()
+    if len(query) > MAX_QUERY_CHARS:
+        raise ValueError(f"query must be at most {MAX_QUERY_CHARS} characters")
     names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
     jobs = []
     for n in names:
@@ -567,6 +614,17 @@ PAYMENT_EVIDENCE = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:usd|dollars?|per month|/mo)\b",
     re.I,
 )
+
+PAYMENT_INTENT = re.compile(
+    r"\b(?:would pay|will pay|willing to pay|i['’]?d pay|i would pay|i will pay|"
+    r"ready to pay|would buy|i['’]?d buy|i would buy|take my money|subscribe if|"
+    r"pay for (?:this|that|a solution|an app|a tool))\b",
+    re.I,
+)
+PAYMENT_NEGATION = re.compile(
+    r"\b(?:would not|wouldn't|will not|won't|never|cannot|can't|do not|don't)\s+(?:ever\s+)?pay\b",
+    re.I,
+)
 VALIDATION_GUIDE = (
     "Judge three things from the buckets. Saturation: many existing_solutions with strong reviews means the gap is thin; "
     "look for what they get wrong. Willingness to pay: paying_signals show people spending money or time. "
@@ -584,48 +642,123 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
     if not isinstance(problem, str) or not problem.strip():
         raise ValueError("problem must be a non-empty string")
     problem = problem.strip()
+    if len(problem) > MAX_QUERY_CHARS:
+        raise ValueError(f"problem must be at most {MAX_QUERY_CHARS} characters")
     niche = niche.strip() if isinstance(niche, str) else ""
+    if len(niche) > MAX_QUERY_CHARS:
+        raise ValueError(f"niche must be at most {MAX_QUERY_CHARS} characters")
     lens = lens if lens in SOLUTION_WORDS else "software"
-    qs = [f"{problem} alternative", f"{problem} tool", f'"I pay for" {problem}', f"{problem} workaround"]
+
+    variants = query_variants(problem)
+    primary = variants[0]
+    qs = [f"{primary} alternative", f"{primary} tool", f'"would pay" {primary}', f"{primary} workaround"]
     if lens == "hardware":
-        qs = [f"{problem} product", f"{problem} diy", f'"I bought" {problem}', f"{problem} alternative"]
+        qs = [f"{primary} product", f"{primary} diy", f'"I bought" {primary}', f"{primary} alternative"]
     if lens == "policy":
-        qs = [f"{problem} law", f"{problem} petition", f"{problem} campaign", f"{problem} policy"]
+        qs = [f"{primary} law", f"{primary} petition", f"{primary} campaign", f"{primary} policy"]
+    # A second compact query is useful when the user supplied a long statement, but
+    # the query planner keeps every explicit offline/platform/resource constraint.
+    if len(variants) > 1:
+        suffix = "product" if lens == "hardware" else "alternative" if lens != "policy" else "law"
+        qs.append(f"{variants[1]} {suffix}")
+
     jobs = []
     for q in qs:
-        jobs += [Job("hn", q, {}, 15), Job("reddit", q, {}, 15)]
+        jobs += [Job("hn", q, {}, 12), Job("reddit", q, {}, 12)]
     if lens == "policy":
-        jobs += [Job("petitions", problem, {}, 15), Job("nyc311", problem, {}, 15)]
-    for s in (LENSES[lens]["se"] if lens in ("hardware", "policy") else se_sites_for(niche or problem))[:2]:
-        jobs += [Job("se", qs[0], {"site": s}, 15), Job("se", qs[3], {"site": s}, 15)]
+        jobs += [Job("petitions", primary, {}, 12), Job("nyc311", primary, {}, 12)]
+    sites = (LENSES[lens]["se"] if lens in ("hardware", "policy") else se_sites_for(niche or primary))[:2]
+    for site in sites:
+        jobs += [Job("se", qs[0], {"site": site}, 12), Job("se", qs[3], {"site": site}, 12)]
+
     raw, status = run_jobs(jobs)
     solution_re = re.compile(rf"\b({SOLUTION_WORDS[lens]})\b", re.I)
-    buckets = {"existing_solutions": [], "paying_signals": [], "workaround_signals": []}
+    buckets = {
+        "existing_solutions": [],
+        "paying_signals": [],
+        "willingness_to_pay_signals": [],
+        "workaround_signals": [],
+    }
+    terms = list(dict.fromkeys([*variants, niche]))
+    terms = [term for term in terms if term]
+    def sentence_is_about_problem(sentence: str) -> bool:
+        if not constraints_match(problem, sentence):
+            return False
+        return any(relevance(term, sentence, loose=True) > 0 for term in terms)
+
     for p in _dedupe(raw):
         text = _body(p)
-        terms = [term for term in (niche, problem) if term]
         rel = max((relevance(term, text) for term in terms), default=0.0)
-        if rel < 0.3:
+        # A result must be about the target, not merely contain a solution/payment
+        # keyword somewhere in an otherwise unrelated document.
+        if rel < 0.3 or not constraints_match(problem, text):
             continue
-        item = _compact(p, rel, text)
-        if solution_re.search(text):
-            buckets["existing_solutions"].append(item)
         sentences = re.split(r"(?<=[.!?])\s+", text)
-        has_problem_payment = any(
-            PAYMENT_EVIDENCE.search(sentence)
-            and any(relevance(term, sentence, loose=True) > 0 for term in terms)
-            for sentence in sentences
+        relevant_sentences = [sentence for sentence in sentences if sentence_is_about_problem(sentence)]
+        item = _compact(p, rel, text)
+        if any(solution_re.search(sentence) for sentence in relevant_sentences):
+            buckets["existing_solutions"].append(item)
+
+        for sentence in relevant_sentences:
+            if PAYMENT_EVIDENCE.search(sentence):
+                buckets["paying_signals"].append(item)
+                break
+        for sentence in relevant_sentences:
+            if PAYMENT_INTENT.search(sentence) and not PAYMENT_NEGATION.search(sentence):
+                buckets["willingness_to_pay_signals"].append(item)
+                break
+        for sentence in relevant_sentences:
+            if HACK_WORDS.search(sentence):
+                buckets["workaround_signals"].append(item)
+                break
+
+    for key in buckets:
+        # Keep the same source URL from being repeated in one bucket by overlapping
+        # query variants; links remain the inspectable unit of evidence.
+        unique = {item["url"]: item for item in buckets[key]}
+        buckets[key] = sorted(unique.values(), key=lambda x: x["score"], reverse=True)[:6]
+
+    unique_evidence_urls = {
+        item["url"] for items in buckets.values() for item in items
+    }
+    qualified = len(unique_evidence_urls)
+    working_sources = sum(1 for row in status.values() if row.get("state") in ("ok", "partial"))
+    limited_sources = any(
+        row.get("state") in ("partial", "failed", "skipped")
+        or row.get("request_limited")
+        or row.get("capacity_limited")
+        for row in status.values()
+    )
+    if qualified == 0:
+        evidence_status = "insufficient_evidence"
+        evidence_note = (
+            "This search found no qualifying evidence. That does not prove that no solution exists, "
+            "that the problem is unimportant, or that nobody would pay. Check coverage and try different "
+            "wording, additional sources, direct interviews, and external product/review searches."
         )
-        if has_problem_payment:
-            buckets["paying_signals"].append(item)
-        if HACK_WORDS.search(text):
-            buckets["workaround_signals"].append(item)
+    elif qualified < 3 or limited_sources or working_sources < 2:
+        evidence_status = "limited_evidence"
+        evidence_note = (
+            "Some potentially relevant evidence was found, but coverage or evidence volume is limited. "
+            "Treat the results as leads to verify, not proof of demand or market size."
+        )
+    else:
+        evidence_status = "evidence_found_needs_validation"
+        evidence_note = (
+            "Relevant public evidence was found. It is not a representative survey and does not by itself "
+            "validate demand, willingness to pay, or market size."
+        )
+
     return {
         "problem": problem,
         "lens": lens,
+        "searched_as": variants,
+        "required_constraints": missing_constraints(problem, ""),
         "coverage": status,
+        "evidence_status": evidence_status,
+        "evidence_note": evidence_note,
         "counts": {k: len(v) for k, v in buckets.items()},
-        **{k: sorted(v, key=lambda x: x["score"], reverse=True)[:6] for k, v in buckets.items()},
+        **buckets,
         "validation_guide": VALIDATION_GUIDE + VALIDATION_EXTRA.get(lens, ""),
     }
 
