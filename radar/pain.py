@@ -657,7 +657,8 @@ def topic_core_query(query: str) -> str:
             "genuine", "genuinely", "fully", "entirely", "completely", "works", "work",
             "runs", "run", "running", "without", "access", "paid", "paying", "payment",
             "api", "apis", "internet", "connection", "required", "requires", "needed",
-            "support", "supported", "supporting", "minimum", "maximum",
+            "support", "supported", "supporting", "minimum", "maximum", "storage", "ram",
+            "memory", "battery", "resource", "resources",
         }
     )
     subject = []
