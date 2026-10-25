@@ -15,6 +15,7 @@ import re
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeout
+from threading import BoundedSemaphore
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +29,13 @@ DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
+
+# One shared pool bounds source work across concurrent MCP requests. Timed-out calls
+# may still be running in Python threads, so never create a fresh pool per request.
+_SOURCE_WORKERS = 8
+_MAX_IN_FLIGHT_JOBS = 32
+_SOURCE_EXECUTOR = ThreadPoolExecutor(max_workers=_SOURCE_WORKERS, thread_name_prefix="problem-radar-source")
+_SOURCE_SLOTS = BoundedSemaphore(_MAX_IN_FLIGHT_JOBS)
 
 PAPERS = {"scholar", "europepmc"}
 WEB = {"ddg"}  # web pages: no pain-word test (a snippet is short), no bonus, lowest trust
@@ -147,12 +155,29 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
 
 
 def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
-    status = {j.source: {"jobs": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False} for j in jobs}
+    status = {j.source: {"jobs": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
+                         "capacity_limited": False} for j in jobs}
     for j in jobs:
         status[j.source]["jobs"] += 1
     posts: list[S.Post] = []
-    ex = ThreadPoolExecutor(max_workers=8)
-    futs = {ex.submit(S.SOURCES[j.source], j.query, j.limit, **j.opts): j for j in jobs}
+    futs = {}
+    for j in jobs:
+        st = status[j.source]
+        if not _SOURCE_SLOTS.acquire(blocking=False):
+            st["capacity_limited"] = True
+            st["errors"].append("global source-job capacity reached")
+            continue
+        try:
+            future = _SOURCE_EXECUTOR.submit(S.SOURCES[j.source], j.query, j.limit, **j.opts)
+        except Exception as e:
+            _SOURCE_SLOTS.release()
+            st["errors"].append(type(e).__name__)
+            continue
+        # Release only when the task really ends. A request timeout must not free a
+        # slot while its source call is still consuming a worker.
+        future.add_done_callback(lambda _future: _SOURCE_SLOTS.release())
+        futs[future] = j
+
     done = set()
     try:
         for f in as_completed(futs, timeout=DEADLINE):
@@ -175,11 +200,20 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         pass
     for f, j in futs.items():
         if f not in done:
+            f.cancel()  # queued tasks can be cancelled; running threads retain their slot
             status[j.source]["errors"].append("timed out")
-    ex.shutdown(wait=False, cancel_futures=True)
     for st in status.values():
         st["errors"] = sorted(set(st["errors"]))[:3]
-        st["state"] = "skipped" if st["skipped"] else ("ok" if st["ok"] == st["jobs"] else ("partial" if st["ok"] else "failed"))
+        if st["skipped"] and not st["ok"]:
+            st["state"] = "skipped"
+        elif st["ok"] == st["jobs"] and not st["capacity_limited"]:
+            st["state"] = "ok"
+        elif st["ok"]:
+            st["state"] = "partial"
+        elif st["capacity_limited"] and not futs:
+            st["state"] = "skipped"
+        else:
+            st["state"] = "failed"
     return posts, status
 
 
