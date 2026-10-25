@@ -20,8 +20,10 @@ import html
 import os
 import re
 import time
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Lock, local
+from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import httpx
@@ -29,6 +31,114 @@ import httpx
 UA = "problem-radar/0.2 (open-source research tool)"
 TIMEOUT = 12.0
 TAGS = re.compile(r"<[^>]+>")
+
+# Defensive, process-wide limits for a public free-tier instance. These are deliberately
+# below common upstream search quotas; they are a shared guard, not a promise about
+# provider limits. Render restarts reset them, so durable cross-instance quotas require
+# shared storage and are tracked as a separate scaling concern.
+_GLOBAL_REQUESTS_PER_MINUTE = {
+    "reddit": 60, "github": 8, "gitlab": 20, "hn": 20, "se": 10,
+    "bluesky": 10, "arxiv": 20, "scholar": 10, "europepmc": 10,
+    "fda_devices": 10, "petitions": 10, "nyc311": 10,
+}
+_PROVIDER_WINDOWS = defaultdict(deque)
+_PROVIDER_WINDOW_LOCK = Lock()
+_REQUEST_CONTEXT = local()
+
+
+def _provider_for_url(url: str) -> str:
+    host = (urlparse(url).hostname or "").lower()
+    if host.endswith("reddit.com"):
+        return "reddit"
+    if host == "api.github.com":
+        return "github"
+    if host == "gitlab.com":
+        return "gitlab"
+    if host == "hn.algolia.com":
+        return "hn"
+    if host == "api.stackexchange.com":
+        return "se"
+    if host == "public.api.bsky.app":
+        return "bluesky"
+    if host == "export.arxiv.org":
+        return "arxiv"
+    if host == "api.openalex.org":
+        return "scholar"
+    if host == "www.ebi.ac.uk":
+        return "europepmc"
+    if host == "api.fda.gov":
+        return "fda_devices"
+    if host == "petition.parliament.uk":
+        return "petitions"
+    if host == "data.cityofnewyork.us":
+        return "nyc311"
+    return host or "unknown"
+
+
+class ProviderRequestBudget:
+    """Actual outbound request counter shared by every source worker in one tool call."""
+
+    def __init__(self, limit_per_provider: int = 2):
+        self.limit_per_provider = max(1, int(limit_per_provider))
+        self._used = Counter()
+        self._denied = Counter()
+        self._lock = Lock()
+
+    def consume(self, provider: str) -> bool:
+        with self._lock:
+            if self._used[provider] >= self.limit_per_provider:
+                self._denied[provider] += 1
+                return False
+            self._used[provider] += 1
+            return True
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return dict(self._used)
+
+    def denials(self) -> dict:
+        with self._lock:
+            return dict(self._denied)
+
+
+def invoke_with_budget(fn, budget: ProviderRequestBudget, *args, **kwargs):
+    """Install a per-tool-call budget in this worker thread for the duration of a source job."""
+    previous = getattr(_REQUEST_CONTEXT, "budget", None)
+    _REQUEST_CONTEXT.budget = budget
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        if previous is None:
+            try:
+                del _REQUEST_CONTEXT.budget
+            except AttributeError:
+                pass
+        else:
+            _REQUEST_CONTEXT.budget = previous
+
+
+def _reserve_http_request(url: str) -> tuple[bool, str]:
+    provider = _provider_for_url(url)
+    now = time.monotonic()
+    with _PROVIDER_WINDOW_LOCK:
+        window = _PROVIDER_WINDOWS[provider]
+        while window and now - window[0] >= 60.0:
+            window.popleft()
+        per_minute = _GLOBAL_REQUESTS_PER_MINUTE.get(provider, 10)
+        if len(window) >= per_minute:
+            return False, f"shared per-process {provider} request limit reached ({per_minute}/minute); no retry attempted"
+        budget = getattr(_REQUEST_CONTEXT, "budget", None)
+        if budget is not None and not budget.consume(provider):
+            return False, f"per-tool-call {provider} request budget exhausted ({budget.limit_per_provider} outbound requests); no retry attempted"
+        window.append(now)
+        return True, ""
+
+
+def _reset_request_limits_for_tests() -> None:
+    """Clear in-memory guards for deterministic tests only."""
+    with _PROVIDER_WINDOW_LOCK:
+        _PROVIDER_WINDOWS.clear()
+
 
 
 @dataclass
@@ -65,7 +175,10 @@ def _iso(epoch) -> str:
 
 
 def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
-    """Returns (json, error_string)."""
+    """Returns (json, error_string). Never retries or follows redirects (one request = one budget unit)."""
+    allowed, budget_error = _reserve_http_request(url)
+    if not allowed:
+        return None, budget_error
     try:
         r = httpx.request(
             method,
@@ -75,12 +188,14 @@ def _get(url, params=None, headers=None, auth=None, method="GET", data=None):
             auth=auth,
             headers={"User-Agent": UA, **(headers or {})},
             timeout=TIMEOUT,
-            follow_redirects=True,
+            follow_redirects=False,
         )
         if r.status_code == 429:
             return None, "rate limited (429)"
         if r.status_code in (401, 403):
             return None, f"blocked or unauthorized ({r.status_code})"
+        if 300 <= r.status_code < 400:
+            return None, f"redirect refused ({r.status_code}); one request only"
         r.raise_for_status()
         return r.json(), ""
     except Exception as e:  # network, JSON, status
@@ -364,11 +479,16 @@ def arxiv(query: str, limit: int = 20, **_) -> Result:
             if _arxiv_last_request and now - _arxiv_last_request < 3.0:
                 return Result([], True, "deferred to honor arXiv's three-second request spacing; no retry attempted", skipped=True)
             try:
+                url = "https://export.arxiv.org/api/query"
+                allowed, budget_error = _reserve_http_request(url)
+                if not allowed:
+                    return Result([], True, budget_error, skipped=True)
                 response = httpx.get(
-                    "https://export.arxiv.org/api/query",
+                    url,
                     params=params,
                     timeout=TIMEOUT,
                     headers={"User-Agent": UA},
+                    follow_redirects=False,
                 )
             except Exception as e:
                 _arxiv_last_request = time.monotonic()
