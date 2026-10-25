@@ -369,13 +369,10 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         topic_match = any(is_relevant(t, text) for t in topic_terms)
         community_match = any(relevance(t, text, loose=True) >= 0.5 for t in topic_terms)
         # For very short topics, a matching community name can supply context that the post omits.
-        community_name_match = (
-            len(topic_terms) == 1
-            or any(
-                len(re.findall(r"[a-z0-9]+", t.lower())) <= 2
-                and relevance(t, p.meta.get("site", ""), loose=True) >= 0.5
-                for t in topic_terms
-            )
+        community_name_match = any(
+            len(re.findall(r"[a-z0-9]+", t.lower())) <= 2
+            and relevance(t, p.meta.get("site", ""), loose=True) >= 0.5
+            for t in topic_terms
         )
         if community and (community_match or community_name_match):
             topic_match = True
