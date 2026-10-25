@@ -1076,15 +1076,27 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
     for p in _dedupe(raw):
         text = _body(p)
         rel = max((relevance(term, text) for term in terms), default=0.0)
-        # The document must match the requested topic and demonstrate the explicit
-        # constraints; loose word overlap alone is not enough.
-        if not topic_fit_with_alternates(problem, terms[1:], text, p.title) or not constraints_match(problem, text):
+        # Existing-product search is intentionally a broader lead-finding bucket than
+        # demand validation: an invoice-sync product can be relevant to reconciliation
+        # even if the source never uses the word "reconciliation". It still must overlap
+        # the target substantially and satisfy every explicit hard requirement.
+        strict_topic_match = topic_fit_with_alternates(problem, terms[1:], text, p.title)
+        solution_lead = bool(solution_re.search(text)) and rel >= 0.3
+        if (not strict_topic_match and not solution_lead) or not constraints_match(problem, text):
             continue
-        sentences = ([clean(p.title)] if p.title else []) + re.split(r"(?<=[.!?])\s+", clean(p.text or ""))
+        sentences = ([clean(p.title)] if p.title else []) + re.split(r"(?<=[.!?])\\s+", clean(p.text or ""))
         relevant_sentences = [sentence for sentence in sentences if sentence and sentence_is_about_problem(sentence)]
         item = _compact(p, rel, text)
-        if any(solution_re.search(sentence) for sentence in relevant_sentences):
+        if solution_lead and (
+            solution_re.search(p.title or "")
+            or any(solution_re.search(sentence) for sentence in relevant_sentences)
+        ):
             buckets["existing_solutions"].append(item)
+
+        # A broad product lead can answer only the existing-solution question. It is
+        # not strong enough to count payment intent, spending, or workaround evidence.
+        if not strict_topic_match:
+            continue
 
         # A vendor guide or software roundup may be a useful product lead, but its
         # pricing and workflow words are not independent user demand or workaround evidence.
