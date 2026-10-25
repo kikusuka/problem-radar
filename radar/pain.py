@@ -4,6 +4,8 @@ from __future__ import annotations
 import math
 import re
 
+from .signal_quality import signal_profile
+
 # Phrase sets per solution lens: (quick, deep). People describe pain differently depending on what would fix it.
 PHRASES_QUICK = [
     "is there a tool that",
@@ -133,8 +135,8 @@ def signals(text: str) -> dict:
 
 
 def looks_like_pain(text: str) -> bool:
-    """At least two cues, so one stray word like 'hours' isn't enough."""
-    return sum(signals(text).values()) >= 2
+    """Require multiple generic cues or one explicit multi-word pain phrase."""
+    return sum(signals(text).values()) >= 2 or signal_profile(text)["explicit_pain"]
 
 
 def heat(text: str, score: int, comments: int) -> float:
