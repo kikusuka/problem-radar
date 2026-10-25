@@ -433,7 +433,7 @@ def test_fda_devices_turns_adverse_events_into_posts(monkeypatch):
 
 
 def test_fda_devices_no_match_is_empty_not_failure(monkeypatch):
-    monkeypatch.setattr(S, "_get", lambda *a, **k: (None, "HTTPStatusError: Client error '404 NOT FOUND'"))
+    monkeypatch.setattr(S, "_get", lambda *a, **k: (None, "HTTP 404 from openFDA"))
     res = S.fda_devices("zzzz", 5)
     assert res.ok and res.posts == []
 
@@ -1154,6 +1154,25 @@ def test_solution_search_finds_topical_projects_as_constraint_near_misses(monkey
         for item in out["constraint_near_misses"]
     )
     assert out["assessment"]["hint"] == "inconclusive_constraints_not_matched"
+
+
+def test_http_errors_do_not_expose_query_terms_or_api_keys(monkeypatch):
+    monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
+    request = httpx.Request(
+        "GET",
+        "https://api.openalex.org/works?api_key=secret-test-key&search=private%20research%20topic",
+    )
+    response = httpx.Response(500, request=request)
+    monkeypatch.setattr(S.httpx, "request", lambda *a, **k: response)
+
+    data, error = S._get(
+        "https://api.openalex.org/works",
+        {"api_key": "secret-test-key", "search": "private research topic"},
+    )
+
+    assert data is None
+    assert error == "HTTP 500 from openalex"
+    assert "secret-test-key" not in error and "private research topic" not in error
 
 
 def test_nyc311_app_token_is_sent_without_changing_public_query(monkeypatch):
