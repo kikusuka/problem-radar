@@ -52,7 +52,7 @@ def test_coverage_reports_every_source_state():
     assert cov["bluesky"]["state"] == "partial"
     assert "ddg" not in cov and "tavily" not in cov
     assert out["provider_request_units_budgeted"] <= (
-        len(research.SOURCES) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
+        len(S.SOURCES) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
     )
 
 
