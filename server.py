@@ -53,8 +53,9 @@ def check_if_solved(problem: str, lens: str = "software") -> dict:
     Searches GitHub repositories, Show HN and product discussion, and recent papers; policy checks also use UK petitions.
     The research lens adds arXiv preprints. It gives a hint with reasons and a guide to finding the gap the best existing
     solution leaves open. Absence of results is never proof that nobody solved it. If required_constraints are present, candidates must demonstrate those constraints;
-    constraint_candidates_excluded counts related candidates that did not. "inconclusive_constraints_not_matched" means
-    the search did not demonstrate the requested requirements, not that no solution exists.
+    constraint_candidates_excluded counts related candidates that did not; constraint_near_misses shows up to five topical
+    candidates with the requirements they failed to demonstrate. Generic word overlap is not enough to qualify a candidate.
+    "inconclusive_constraints_not_matched" means the search did not demonstrate the requested requirements, not that no solution exists.
     lens: software, hardware, policy, research or any.
     """
     return solved.check(problem, lens)
@@ -100,16 +101,19 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     policy (rules, services, civic fixes; includes UK petition signature counts and NYC 311 complaint counts),
     research (recent papers calling something open or understudied), or any (default; the analyst decides the fix type).
     goal tunes the guidance: hackathon, hobby, portfolio, impact, class_project, capstone, research, science_fair.
-    Returns ranked public-source leads, not verified facts. Inspect the URLs and snippets; use the analysis_guide to
-    separate reports, products, papers and official data. Check coverage before interpreting a thin result set. A missing
+    Returns ranked public-source leads, not verified facts. Inspect URLs and snippets; use the analysis_guide to
+    separate reports, products, papers and official data. Check coverage before interpreting thin results. A missing
     result is not evidence that the problem does not exist. depth: quick (default) or deep. Sources include Hacker News,
-    Stack Exchange, Reddit, Bluesky public posts, optional GitLab public issues (requires GITLAB_TOKEN), GitHub issues
-    for developer niches, OpenAlex and Europe PMC papers, arXiv preprints for research, and applicable official civic data.
-    There is no automatic general web-search fallback or paid-provider substitution. The public request budget admits at most
-    16 source jobs and at most two outbound request units per upstream provider; authentication handshakes count where relevant.
+    Stack Exchange, Reddit, optional GitLab public issues (requires GITLAB_TOKEN), GitHub issues for developer niches,
+    OpenAlex and Europe PMC papers, arXiv preprints for research, and applicable official civic data. Bluesky is excluded
+    from default queries until its live HTTP 403 is resolved, but can be explicitly selected for diagnostics.
+    The planner uses short constraint-preserving queries first, then supplied synonyms before generic modifiers; relevance
+    uses topic anchors and hard-constraint checks. Cross-source duplicate titles are collapsed. There is no automatic
+    general web-search fallback or paid-provider substitution. The public request budget admits at most 16 source jobs
+    and at most two outbound request units per upstream provider; authentication handshakes count where relevant.
     Check queries_planned, queries_budgeted, provider_request_units_budgeted, queries_run, queries_succeeded,
-    queries_timed_out, queries_cancelled_before_start, and each source's coverage flags. Some planned jobs are deliberately
-    omitted to respect those caps. se_sites: Stack Exchange sites. Cached 36h; refresh=True re-runs.
+    queries_timed_out, queries_cancelled_before_start, and each source's coverage flags. se_sites: Stack Exchange sites.
+    Cached 36h; refresh=True re-runs.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 
