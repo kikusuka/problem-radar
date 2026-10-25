@@ -589,7 +589,7 @@ def arxiv(query: str, limit: int = 20, **_) -> Result:
                 )
             except Exception as e:
                 _arxiv_last_request = time.monotonic()
-                return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
+                return Result([], False, f"{type(e).__name__} from arXiv")
             _arxiv_last_request = time.monotonic()
     except Exception as e:
         return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
