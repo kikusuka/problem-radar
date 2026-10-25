@@ -1049,6 +1049,14 @@ def test_related_paper_alone_does_not_mean_partially_solved():
     assert any("do not by themselves demonstrate a working solution" in reason for reason in assessment["reasons"])
 
 
+def test_reddit_community_uses_only_one_compact_planned_job():
+    jobs = research.plan("offline AI assistant for low-end Android phones", "quick", lens="software")
+    community = [j for j in jobs if j.source == "reddit_community"]
+    assert len(community) <= 1
+    if community:
+        assert community[0].query == pain.query_variants("offline AI assistant for low-end Android phones")[0]
+
+
 def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeypatch):
     monkeypatch.setattr(S, "startup_request_cost", lambda provider: 0)
     jobs = research.plan(
