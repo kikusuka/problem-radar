@@ -127,8 +127,11 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
     """Search for complaints with your own wording, e.g. 'pedestrian crossing near school' or 'quickbooks invoice export'.
 
     Use it to follow up on a theme from research_niche or probe a specific workflow. Pass subreddit to focus Reddit.
-    Built-in sources only: there is no automatic general web-search fallback. Query length is capped and source/site
-    lists are bounded; per-provider request limits may omit planned work. Check coverage and treat results as leads.
+    Built-in sources only: there is no automatic general web-search fallback. Results require topical and pain/workaround
+    evidence; product-launch announcements and spending-only mentions are not treated as independent complaints.
+    Query constraints are surfaced in each result's missing_constraints field rather than silently discarding every
+    related complaint that omits a constraint. Query length is capped and source/site lists are bounded; per-provider
+    request limits may omit planned work. Check coverage and treat results as leads.
     """
     return research.search(query, sources, limit, subreddit, se_sites)
 

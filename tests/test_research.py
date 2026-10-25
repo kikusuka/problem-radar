@@ -1155,3 +1155,34 @@ def test_long_specific_query_requires_more_topic_anchors():
         "Android local LLM crashes out of memory",
         "The Android app running a local LLM crashes with an out of memory error.",
     )
+
+
+def test_search_pain_filters_promotions_and_money_only_posts(monkeypatch):
+    complaint = S.Post(
+        "github", "android-oom", "Android local LLM crashes with memory errors",
+        "The Android app running a local LLM crashes under memory pressure after longer prompts; "
+        "this is frustrating when it stops responding.",
+        "https://example.com/oom", "reporter", 1, 4, "2026-10-24",
+    )
+    promotional = S.Post(
+        "reddit", "launch-local-ai", "Offline Android local LLM app is now live",
+        "Excited to announce a new offline Android local LLM app. It is now live and available to download. "
+        "Download directly from the App Store today.",
+        "https://example.com/launch", "maker", 50, 30, "2026-10-24",
+    )
+    money_only = S.Post(
+        "reddit", "mac-price", "Local LLM Mac setup cost",
+        "I pay $20 per month for a subscription and use a Mac for local inference.",
+        "https://example.com/cost", "user", 5, 9, "2026-10-24",
+    )
+    monkeypatch.setitem(S.SOURCES, "github", lambda q, limit=20, **k: S.Result([complaint]))
+    monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([promotional, money_only]))
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result([]))
+
+    out = research.search(
+        "offline Android local LLM crashes out of memory",
+        sources=["github", "reddit", "hn"],
+    )
+    assert [p["url"] for p in out["results"]] == ["https://example.com/oom"]
+    assert "offline operation" in out["results"][0]["missing_constraints"]
+    assert "missing_constraints" in out["results"][0]

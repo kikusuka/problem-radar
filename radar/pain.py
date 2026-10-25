@@ -137,8 +137,10 @@ def signals(text: str) -> dict:
 
 
 def looks_like_pain(text: str) -> bool:
-    """Require multiple generic cues or one explicit multi-word pain phrase."""
-    return sum(signals(text).values()) >= 2 or signal_profile(text)["explicit_pain"]
+    """Require problem/workaround/intent evidence; spending mentions alone are not pain."""
+    found = signals(text)
+    non_money_cues = found["pain"] + found["hack"] + found["intent"]
+    return non_money_cues >= 2 or signal_profile(text)["explicit_pain"]
 
 
 def heat(text: str, score: int, comments: int) -> float:
@@ -436,6 +438,12 @@ _TOPIC_ALIAS_GROUPS = {
         "assistive", "assistive device", "assistive devices", "wheelchair", "wheelchairs",
         "mobility aid", "mobility aids", "power assist", "accessibility aid", "accessibility aids",
     },
+    "technical_failure": {
+        "crash", "crashes", "crashed", "crashing", "oom", "out of memory", "out-of-memory",
+        "out of ram", "out-of-ram", "memory exhaustion", "not enough ram", "memory leak",
+        "freeze", "freezes", "freezing", "frozen", "hang", "hangs", "hung",
+        "fails to load", "failure to load", "battery drain",
+    },
 }
 _TOPIC_ALIAS_INDEX = {}
 for _group, _aliases in _TOPIC_ALIAS_GROUPS.items():
@@ -469,17 +477,28 @@ def _topic_groups(query: str) -> list[tuple[str, str]]:
     return groups
 
 
+_TECHNICAL_FAILURE_CUE = re.compile(
+    r"\b(?:crash(?:es|ed|ing)?|oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|"
+    r"memory exhaustion|not enough ram|memory leak|freez(?:e|es|ing|en)?|hangs?|hung|"
+    r"fails? to load|failure to load|battery drain)\b",
+    re.I,
+)
+
+
 def topic_fit(query: str, text: str, title: str = "") -> bool:
-    """Require one or two topical anchors, not just loose overlap on generic words.
+    """Require topical anchors and retain explicit technical failure intent.
 
     Hard constraints are checked separately by constraints_match(). Known equivalents
-    (e.g. LLM/language model, assistant/chatbot, phone/mobile device) count as one
-    anchor group. This deliberately favors precision when classifying solutions.
+    (e.g. LLM/language model, assistant/chatbot, crash/OOM) count as one anchor group.
     """
     groups = _topic_groups(query)
     if not groups:
         return False
     candidate = f"{title or ''} {text or ''}".lower()
+    # A crash/OOM query must not match a general product announcement just because
+    # it mentions Android and a language model.
+    if _TECHNICAL_FAILURE_CUE.search(query or "") and not _TECHNICAL_FAILURE_CUE.search(candidate):
+        return False
     matched = 0
     for key, anchor in groups:
         if key.startswith("word:"):
