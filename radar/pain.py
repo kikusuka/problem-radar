@@ -655,7 +655,7 @@ def topic_core_query(query: str) -> str:
         STOP_WORDS | GENERIC | _TOPIC_GENERIC | _TOPIC_CONSTRAINT_WORDS
         | {
             "genuine", "genuinely", "fully", "entirely", "completely", "works", "work",
-            "runs", "run", "running", "without", "access", "paid", "paying", "payment",
+            "runs", "run", "running", "without", "with", "because", "there", "access", "paid", "paying", "payment",
             "api", "apis", "internet", "connection", "required", "requires", "needed",
             "support", "supported", "supporting", "minimum", "maximum", "storage", "ram",
             "memory", "battery", "resource", "resources",
