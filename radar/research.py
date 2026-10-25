@@ -194,7 +194,7 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
 
 def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_sites: list[str] | None = None,
          lens: str = "any", also: list[str] | None = None, region: dict | None = None) -> list[Job]:
-    """Broad-first: the niche alone plus single-word modifiers. Pain is judged locally, not by the search engine."""
+    """Plan compact topic and synonym queries first; generic modifiers are lower priority under tight provider caps."""
     sources = _bounded_string_list(sources, "sources")
     se_sites = _bounded_string_list(se_sites, "se_sites")
     lens = lens if lens in LENSES else "any"
@@ -235,7 +235,9 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
         elif name in PAPERS:
             jobs += [Job(name, q, {}, per) for q in queries[: 5 if deep else 4]]
         elif name == "reddit_community":
-            jobs += [Job("reddit_community", q, {}, per) for q in dict.fromkeys([niche] + extra[:2])]
+            # One Reddit community job uses the provider's full two-request budget.
+            # Use the compact primary query and avoid creating unselectable duplicate jobs.
+            jobs.append(Job("reddit_community", queries[0], {}, per))
         elif name == "fda_devices":  # generic device names: use the niche and the analyst's synonyms ("hearing aid", "wheelchair")
             jobs += [Job("fda_devices", q, {}, per) for q in dict.fromkeys([niche] + extra[:3])]
         elif name in STRUCTURED:
