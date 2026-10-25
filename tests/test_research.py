@@ -1,5 +1,8 @@
 import time
 import asyncio
+import os
+import subprocess
+import sys
 
 import pytest
 from radar import regions as R_
@@ -664,3 +667,17 @@ def test_student_hunt_keeps_a_specific_project_interest():
     interest = "offline AI assistant for low-end Android phones"
     result = hunt.student_hunt(field="computer science", interests=[interest])
     assert result["seed_niches"][0]["niche"] == interest
+
+
+def test_personal_json_tools_refuse_network_transport():
+    env = os.environ.copy()
+    env["ENABLE_PERSONAL"] = "1"
+    env["TRANSPORT"] = "streamable-http"
+    result = subprocess.run(
+        [sys.executable, "-c", "import server"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "local stdio use only" in result.stderr
