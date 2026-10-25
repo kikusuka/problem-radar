@@ -667,12 +667,14 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         structured = p.source in STRUCTURED
         paper = p.source in PAPERS
 
-        # A launch announcement is a product lead, not independent evidence that users
-        # have pain. Keep topical launches in near_misses for inspection, but never rank
-        # them as complaints. This also applies to search_pain, whose results are meant
-        # to surface complaints rather than marketing copy.
-        product_lead = profile["promotional"] or profile["evidence_kind"] == "solution_showcase"
-        if product_lead and not structured and not paper:
+        # Product showcases, promotions, and educational tutorials can be useful leads,
+        # but they are not independent reports of user pain. Preserve relevant examples
+        # in near_misses rather than promoting them to complaint results.
+        non_complaint_artifact = (
+            profile["promotional"]
+            or profile["evidence_kind"] in {"solution_showcase", "technical_tutorial"}
+        )
+        if non_complaint_artifact and not structured and not paper:
             topic_related = any(_product_lead_topic_match(t, text, p.title) for t in topic_terms)
             if topic_related and (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)):
                 title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
@@ -859,6 +861,8 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
             reason = "promotional product announcement; inspect as a product lead, not independent pain evidence"
         elif profile["evidence_kind"] == "solution_showcase":
             reason = "solution showcase or existing-product lead; inspect separately from independent pain evidence"
+        elif profile["evidence_kind"] == "technical_tutorial":
+            reason = "educational/tutorial content; may explain the technology but is not an independent user complaint"
         else:
             reason = "topic-adjacent candidate did not clear the complaint or full relevance checks"
         near_misses.append({
@@ -880,7 +884,7 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
         "search_diagnostics": _search_diagnostics(len(selected), len(misses), status, scheduled_variants),
         "note": (
             "Results are topic-matched complaint leads, not proof of prevalence. Inspect missing_constraints and evidence_kind. "
-            "Promotional launches and detected solution showcases are excluded from complaint results and shown as near-miss product leads where relevant. "
+            "Promotional launches, solution showcases, and detected tutorials are excluded from complaint results and shown as near-misses where relevant. "
             "Query alternatives share the same provider/request budget; no second search phase or paid fallback is used."
         ),
     }
