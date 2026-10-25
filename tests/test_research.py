@@ -34,7 +34,9 @@ def fakes(monkeypatch, tmp_path):
     monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result(list(SE)))
     monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([], False, "blocked or unauthorized (403)"))
     monkeypatch.setitem(S.SOURCES, "reddit_community", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "gitlab", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "bluesky", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     monkeypatch.setitem(S.SOURCES, "arxiv", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "fda_devices", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "europepmc", lambda q, limit=20, **k: S.Result([]))
@@ -539,6 +541,43 @@ def test_openalex_api_key_is_sent_in_request(monkeypatch):
     assert result.ok and result.posts == []
     assert calls["url"] == "https://api.openalex.org/works"
     assert calls["params"]["api_key"] == "openalex-test-key"
+
+
+def test_gitlab_requires_token_and_maps_public_issue(monkeypatch):
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+    assert S.gitlab("offline android assistant").skipped
+
+    monkeypatch.setenv("GITLAB_TOKEN", "unit-test-token")
+    calls = {}
+
+    def fake_get(url, params=None, headers=None, auth=None, method="GET", data=None):
+        calls["url"] = url
+        calls["params"] = params
+        calls["headers"] = headers
+        return ([{
+            "id": 42,
+            "title": "Offline Android assistant crashes on low-memory devices",
+            "description": "The app crashes when available RAM is low.",
+            "web_url": "https://gitlab.com/example/project/-/issues/42",
+            "created_at": "2026-10-10T00:00:00Z",
+            "author": {"username": "reporter"},
+            "upvotes": 4,
+            "downvotes": 1,
+            "user_notes_count": 6,
+            "state": "opened",
+        }], "")
+
+    monkeypatch.setattr(S, "_get", fake_get)
+    result = S.gitlab("offline android assistant")
+
+    assert result.ok and len(result.posts) == 1
+    assert calls["url"] == "https://gitlab.com/api/v4/search"
+    assert calls["params"]["scope"] == "issues"
+    assert calls["headers"]["PRIVATE-TOKEN"] == "unit-test-token"
+    assert result.posts[0].score == 3
+    assert result.posts[0].comments == 6
+    assert result.posts[0].meta["site"] == "example/project"
+    assert result.posts[0].url.endswith("/-/issues/42")
 
 
 def test_bluesky_search_uses_public_api_and_maps_posts(monkeypatch):
