@@ -1013,27 +1013,49 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
 
     variants = query_variants(problem)
     primary = variants[0]
-    qs = [f"{primary} alternative", f"{primary} tool", f'"would pay" {primary}', f"{primary} workaround"]
+    solution_query = f"{primary} alternative"
+    workaround_query = f"{primary} workaround"
+    payment_query = f'"would pay" {primary}'
     if lens == "hardware":
-        qs = [f"{primary} product", f"{primary} diy", f'"I bought" {primary}', f"{primary} alternative"]
+        solution_query = f"{primary} product"
+        workaround_query = f"{primary} diy"
+        payment_query = f'"I bought" {primary}'
     if lens == "policy":
-        qs = [f"{primary} law", f"{primary} petition", f"{primary} campaign", f"{primary} policy"]
-    # A second compact query is useful when the user supplied a long statement, but
-    # the query planner keeps every explicit offline/platform/resource constraint.
-    if len(variants) > 1:
-        suffix = "product" if lens == "hardware" else "alternative" if lens != "policy" else "law"
-        qs.append(f"{variants[1]} {suffix}")
+        solution_query = f"{primary} law"
+        workaround_query = f"{primary} campaign"
+        payment_query = f"{primary} petition"
 
-    jobs = []
-    for q in qs:
-        jobs += [Job("hn", q, {}, 12), Job("reddit", q, {}, 12)]
+    # Schedule distinct validation intents deliberately. The per-provider cap means
+    # each upstream only gets one or two calls; don't let repeated "alternative/tool"
+    # searches crowd out willingness-to-pay and workaround queries.
+    jobs: list[Job] = [
+        Job("hn", solution_query, {}, 12, "existing_solutions"),
+        Job("hn", workaround_query, {}, 12, "workaround"),
+        Job("reddit", payment_query, {}, 12, "willingness_to_pay"),
+        Job("reddit", workaround_query, {}, 12, "workaround"),
+    ]
+    se_sites = (LENSES[lens]["se"] if lens in ("hardware", "policy") else se_sites_for(niche or primary))[:2]
+    if se_sites:
+        jobs.append(Job("se", solution_query, {"site": se_sites[0]}, 12, "existing_solutions"))
+        jobs.append(Job("se", workaround_query, {"site": se_sites[1] if len(se_sites) > 1 else se_sites[0]}, 12, "workaround"))
+    if lens == "software":
+        # Both endpoints share GitHub's two-request allowance: use one project search
+        # and one issue search rather than repeatedly querying one type of evidence.
+        jobs.append(Job("github_repo", primary, {}, 15, "existing_solutions"))
+        jobs.append(Job("github", workaround_query, {}, 12, "workaround"))
+        if S.enabled().get("gitlab", {}).get("enabled"):
+            jobs.append(Job("gitlab", solution_query, {}, 12, "existing_solutions"))
+            jobs.append(Job("gitlab", workaround_query, {}, 12, "workaround"))
     if lens == "policy":
-        jobs += [Job("petitions", primary, {}, 12), Job("nyc311", primary, {}, 12)]
-    sites = (LENSES[lens]["se"] if lens in ("hardware", "policy") else se_sites_for(niche or primary))[:2]
-    for site in sites:
-        jobs += [Job("se", qs[0], {"site": site}, 12), Job("se", qs[3], {"site": site}, 12)]
+        jobs.append(Job("petitions", primary, {}, 12, "public_action"))
+        jobs.append(Job("nyc311", primary, {}, 12, "official_service_request"))
 
+    budgeted_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
     raw, status = run_jobs(jobs)
+    scheduled_intents = [
+        {"source": j.source, "query": j.query, "purpose": j.purpose}
+        for j in budgeted_jobs
+    ]
     solution_re = re.compile(rf"\b({SOLUTION_WORDS[lens]})\b", re.I)
     buckets = {
         "existing_solutions": [],
