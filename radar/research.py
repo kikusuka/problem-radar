@@ -66,7 +66,7 @@ _SOURCE_EXECUTOR = ThreadPoolExecutor(max_workers=_SOURCE_WORKERS, thread_name_p
 _SOURCE_SLOTS = BoundedSemaphore(_MAX_IN_FLIGHT_JOBS)
 
 PAPERS = {"scholar", "europepmc"}
-WEB = {"ddg"}  # web pages: no pain-word test (a snippet is short), no bonus, lowest trust
+WEB = {"tavily", "ddg"}  # web pages are low-trust leads, not direct complaints
 STRUCTURED = {"petitions", "nyc311", "fda_devices"}  # counts and signatures from official data; pain by nature, no pain-word test
 
 SE_GENERIC = ["superuser", "webapps", "workplace"]
@@ -308,7 +308,7 @@ def _body(p: S.Post) -> str:
 
 EVIDENCE_TYPE = {"hn": "reported_need", "reddit": "reported_need", "se": "reported_need", "github": "reported_need",
                  "fda_devices": "measured_outcome", "petitions": "service_request", "nyc311": "service_request",
-                 "scholar": "research_gap", "europepmc": "research_gap", "ddg": "web_lead"}
+                 "scholar": "research_gap", "europepmc": "research_gap", "tavily": "web_lead", "ddg": "web_lead"}
 
 EVIDENCE_NOTE = ("Evidence type: public online posts and open data. Not a survey: who is represented is unknown. Likely over-represented: "
                  "connected, literate, active platform users. Likely under-represented: offline, low-literacy, elderly, rural, disabled and "
@@ -560,8 +560,15 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
     # Default niche research may need a second pass. Reserve up to two of the
     # same 16 request jobs for it instead of letting fallback bypass the cap.
-    ddg_enabled = sources is None and S.enabled()["ddg"]["enabled"]
-    initial_budget = MAX_JOBS_PER_REQUEST - MAX_FALLBACK_JOBS if ddg_enabled else MAX_JOBS_PER_REQUEST
+    enabled_sources = S.enabled()
+    fallback_source = None
+    if sources is None:
+        if enabled_sources.get("tavily", {}).get("enabled"):
+            fallback_source = "tavily"
+        elif enabled_sources.get("ddg", {}).get("enabled"):
+            fallback_source = "ddg"
+    fallback_enabled = fallback_source is not None
+    initial_budget = MAX_JOBS_PER_REQUEST - MAX_FALLBACK_JOBS if fallback_enabled else MAX_JOBS_PER_REQUEST
     main_jobs_budgeted = len(_limit_jobs(jobs, initial_budget))
     raw, status = run_jobs(jobs, max_jobs=initial_budget)
     ranked, misses = _rank(raw, [niche] + also)
@@ -569,22 +576,23 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     fallback_note = ""
     fallback_jobs: list[Job] = []
     fallback_jobs_budgeted = 0
-    if sources is None and len(kept) < 8 and ddg_enabled:
+    if sources is None and len(kept) < 8 and fallback_enabled:
         # Thin results: use only the remaining portion of the same request budget.
         where = f" {reg['name']}" if reg else ""
         qs = [f"{t} problems complaints{where}" for t in ([niche] + also)[:2]] + [f"{niche} struggle OR frustrating OR unmet need{where}"]
-        fallback_jobs = [Job("ddg", q, {}, 8) for q in qs]
+        fallback_jobs = [Job(fallback_source, q, {}, 8) for q in qs]
         remaining_budget = max(0, MAX_JOBS_PER_REQUEST - main_jobs_budgeted)
         fallback_jobs_budgeted = len(_limit_jobs(fallback_jobs, remaining_budget))
         web_raw, web_status = run_jobs(fallback_jobs, max_jobs=remaining_budget)
         status.update(web_status)
+        provider_name = "Tavily" if fallback_source == "tavily" else "DuckDuckGo"
         if web_raw:
             raw = raw + web_raw
             ranked, misses = _rank(raw, [niche] + also)
             kept = [p for _, p, _, _ in ranked]
-            fallback_note = "The initial results were thin, so DuckDuckGo was queried within the same 16-job budget. Returned web pages are low-trust leads to verify, not complaints."
+            fallback_note = f"The initial results were thin, so {provider_name} was queried within the same 16-job budget. Returned web pages are low-trust leads to verify, not complaints."
         else:
-            fallback_note = "The initial results were thin, but DuckDuckGo returned no additional usable leads within the shared request budget. Review coverage, try alternate wording, and verify with people who experience the problem."
+            fallback_note = f"The initial results were thin, but {provider_name} returned no additional usable leads within the shared request budget. Review coverage, try alternate wording, and verify with people who experience the problem."
     ranked = _diversify(ranked, limit)
     payload = {
         "niche": niche,
