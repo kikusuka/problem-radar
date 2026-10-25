@@ -23,7 +23,7 @@ from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
 from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, query_variants, relevance,
-                   signals, topic_fit, query_expansions)
+                   signals, topic_fit, topic_anchor_gaps, topic_candidate_fit, query_expansions)
 from .signal_quality import signal_profile
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -691,7 +691,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         score = heat(text, p.score, p.comments) + signal_bonus + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
         about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
         if not about or not topic_match:
-            if (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)) and any(topic_fit(t, text, p.title) for t in topic_terms):
+            if (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)) and any(topic_candidate_fit(t, text, p.title) for t in topic_terms):
                 misses.append((score, p, rel, text))
             continue
         ranked.append((score, p, rel, text))
@@ -788,6 +788,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                 "title": p.title[:120], "url": p.url, "source": p.source,
                 "snippet": clean(p.text or p.title)[:160],
                 "missing_constraints": missing_constraints(niche, _body(p)),
+                "missing_topic_anchors": topic_anchor_gaps(niche, _body(p), p.title),
                 "reason": (
                     (
                         "promotional product announcement; inspect as a product lead, not independent pain evidence"
@@ -795,7 +796,11 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                         else "solution showcase or existing-product lead; inspect separately from independent pain evidence"
                     )
                     if signal_profile(_body(p))["evidence_kind"] == "solution_showcase" or signal_profile(_body(p))["promotional"]
-                    else "related candidate did not clear the complete relevance or hard-constraint checks"
+                    else (
+                        "partial topic match; inspect missing_topic_anchors and hard constraints before treating this as evidence"
+                        if not topic_fit(niche, _body(p), p.title)
+                        else "related candidate did not clear the complete relevance or hard-constraint checks"
+                    )
                 ),
             }
             for _, p, _, _ in misses[:8]
