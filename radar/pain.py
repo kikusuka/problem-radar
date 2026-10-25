@@ -630,7 +630,7 @@ def _matched_topic_groups(query: str, text: str, title: str = "") -> tuple[list[
             found = _has_word(anchor, candidate, loose=True)
         else:
             found = any(
-                re.search(r"\\b" + r"\\s+".join(re.escape(part) for part in alias.lower().split()) + r"\\b", candidate, re.I)
+                re.search(r"\b" + r"\s+".join(re.escape(part) for part in alias.lower().split()) + r"\b", candidate, re.I)
                 for alias in _TOPIC_ALIAS_GROUPS[key]
             )
         if found:
