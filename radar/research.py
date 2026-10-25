@@ -23,13 +23,13 @@ from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, keywords
 from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, query_variants, relevance,
-                   signals, topic_fit)
+                   signals, topic_fit, query_expansions)
 from .signal_quality import signal_profile
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
-CACHE_SCHEMA_VERSION = 5  # retrieval relevance, promotion filtering and Reddit budget priority changed
+CACHE_SCHEMA_VERSION = 6  # bounded query expansion and evidence classification changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
 MAX_JOBS_PER_REQUEST = 16  # total scheduled source-job budget for one public MCP tool call
@@ -226,7 +226,17 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     # Use a short constraint-preserving query first, then the user's own synonyms,
     # then a compact alternative and finally generic modifiers. Under the 1–2 request
     # cap, this makes selected calls meaningfully different instead of "niche problem".
-    queries = list(dict.fromkeys([compact[0]] + extra + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
+    expanded = query_expansions(niche, max_variants=4)
+    # For explicit failure searches, failure aliases outrank broad synonym terms;
+    # otherwise preserve the caller's also terms before generated alternatives.
+    failure_query = bool(re.search(
+        r"\b(?:crash(?:es|ed|ing)?|oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|"
+        r"memory exhaustion|not enough ram|memory leak|freez(?:e|es|ing|en)?|hangs?|hung|"
+        r"fails? to load|failure to load|battery drain)\b",
+        niche, re.I,
+    ))
+    ordered_alternates = expanded + extra if failure_query else extra + expanded
+    queries = list(dict.fromkeys([compact[0]] + ordered_alternates + compact[1:] + [f"{compact[0]} {m}" for m in mods]))
     jobs: list[Job] = []
     for name in names:
         if name == "se":
@@ -383,6 +393,7 @@ def _compact(p: S.Post, rel: float, text: str) -> dict:
         "url": p.url,
         "source": where,
         "evidence_type": EVIDENCE_TYPE.get(p.source, "reported_need"),
+        "evidence_kind": profile["evidence_kind"],
         "date": p.created,
         "score": p.score,
         "comments": p.comments,
@@ -411,6 +422,70 @@ def _compact(p: S.Post, rel: float, text: str) -> dict:
     if p.meta.get("views") is not None:
         out["views"], out["answered"] = p.meta["views"], p.meta["answered"]
     return out
+
+
+def _evidence_summary(posts: list[S.Post]) -> dict:
+    """Summarize independent-looking sources without claiming authors are verified people."""
+    sources = sorted({p.source for p in posts if p.source})
+    author_handles = {
+        (p.source.casefold(), p.author.strip().casefold())
+        for p in posts
+        if isinstance(p.author, str) and p.author.strip()
+        and p.author.strip().casefold() not in {"unknown", "anonymous", "[deleted]"}
+    }
+    return {
+        "qualifying_post_count": len(posts),
+        "distinct_source_count": len(sources),
+        "sources": sources,
+        "distinct_author_handles": len(author_handles),
+        "corroborated_across_sources": len(sources) >= 2,
+        "interpretation": (
+            "Source and handle counts are clues, not verified independent people. "
+            "Handles are not identity-checked, posts can be cross-posted, and public posts are not a representative survey."
+        ),
+    }
+
+
+def _search_diagnostics(qualifying_count: int, near_miss_count: int, coverage: dict,
+                       scheduled_variants: list[str] | None = None) -> dict:
+    """Explain why a search returned little evidence without treating absence as proof."""
+    succeeded = sorted(name for name, st in coverage.items() if st.get("ok", 0) > 0)
+    limited = sorted(
+        name for name, st in coverage.items()
+        if st.get("request_limited") or st.get("capacity_limited")
+        or st.get("timed_out", 0) or st.get("cancelled_before_start", 0)
+    )
+    failed = sorted(
+        name for name, st in coverage.items()
+        if st.get("state") == "failed" or (st.get("errors") and st.get("ok", 0) == 0
+                                           and not st.get("skipped") and name not in limited)
+    )
+    if qualifying_count:
+        status = "qualifying_results_found"
+        interpretation = "Complaint or evidence leads passed the current filters; verify the original sources and do not treat counts as prevalence."
+    elif limited:
+        status = "coverage_limited"
+        interpretation = "No candidate passed the filters and one or more sources or query variants were limited or timed out. This result is inconclusive, not evidence that the problem is absent."
+    elif near_miss_count:
+        status = "related_candidates_only"
+        interpretation = "Related candidates were found, but none passed all complaint and relevance checks. Inspect the candidate types before concluding there is no evidence."
+    elif failed:
+        status = "source_failures"
+        interpretation = "One or more sources failed and no qualifying result survived. Check coverage before interpreting the empty result."
+    else:
+        status = "no_qualifying_evidence"
+        interpretation = "The completed source calls returned no qualifying evidence. This is not proof that the problem does not exist."
+    return {
+        "status": status,
+        "qualifying_results": qualifying_count,
+        "near_miss_count": near_miss_count,
+        "sources_with_successful_requests": succeeded,
+        "sources_with_failures": failed,
+        "sources_with_limits": limited,
+        "scheduled_query_variants": list(dict.fromkeys(scheduled_variants or [])),
+        "interpretation": interpretation,
+        "retry_policy": "Alternatives are scheduled inside the original request budget; there is no unbounded second search phase or paid fallback.",
+    }
 
 
 def themes(posts: list[S.Post], niche: str, n: int = 12) -> list[dict]:
@@ -566,7 +641,8 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enfor
         # have pain. Keep topical launches in near_misses for inspection, but never rank
         # them as complaints. This also applies to search_pain, whose results are meant
         # to surface complaints rather than marketing copy.
-        if profile["promotional"] and not structured and not paper:
+        product_lead = profile["promotional"] or profile["evidence_kind"] == "solution_showcase"
+        if product_lead and not structured and not paper:
             topic_related = any(topic_fit(t, text, p.title) for t in topic_terms)
             if topic_related and (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)):
                 title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
@@ -659,12 +735,18 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
         "searched_terms": [niche] + also,
+        "query_variants_scheduled": list(dict.fromkeys(j.query for j in budgeted_jobs)),
         "required_constraints": missing_constraints(niche, ""),
         "constraint_note": ("Explicit constraints are required for top-post eligibility; near misses identify constraints they do not demonstrate." if missing_constraints(niche, "") else "No supported hard constraint was detected in the query (offline/local execution, low-resource hardware, affordability, or platform)."),
         "coverage": status,
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
         "recurring_themes": themes(kept, niche),
         "suggested_groups": suggested_groups(kept, niche),
+        "evidence_summary": _evidence_summary(kept),
+        "search_diagnostics": _search_diagnostics(
+            len(kept), len(misses), status,
+            list(dict.fromkeys(j.query for j in budgeted_jobs)),
+        ),
         "analysis_guide": build_guide(lens, goal),
         "from_cache": False,
     }
@@ -675,8 +757,12 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                 "snippet": clean(p.text or p.title)[:160],
                 "missing_constraints": missing_constraints(niche, _body(p)),
                 "reason": (
-                    "promotional product announcement; inspect as a product lead, not independent pain evidence"
-                    if signal_profile(_body(p))["promotional"]
+                    (
+                        "promotional product announcement; inspect as a product lead, not independent pain evidence"
+                        if signal_profile(_body(p))["promotional"]
+                        else "solution showcase or existing-product lead; inspect separately from independent pain evidence"
+                    )
+                    if signal_profile(_body(p))["evidence_kind"] == "solution_showcase" or signal_profile(_body(p))["promotional"]
                     else "related candidate did not clear the complete relevance or hard-constraint checks"
                 ),
             }
@@ -690,8 +776,10 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         payload["region_note"] = R.coverage_note(reg, list(status))
     payload["llm_web_search_suggestions"] = web_suggestions(niche, lens, reg)  # your own search tool covers shops, reviews and news
     if not kept:
-        payload["note"] = ("No qualifying complaints survived the current relevance and constraint checks. This is not evidence that the problem does not exist. "
-                           "Review coverage and near_misses, try alternate wording with constraints preserved, or use search_pain.")
+        payload["note"] = (
+            "No qualifying complaints survived the current relevance and constraint checks. This is not evidence that the problem does not exist. "
+            "Read search_diagnostics and coverage to distinguish a genuine zero-result search from request limits or source failures; inspect near_misses and try a constraint-preserving alternate wording."
+        )
     if cacheable and kept:
         _save(key, payload)
     return payload
@@ -699,7 +787,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
 
 def search(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
            se_sites: list[str] | None = None) -> dict:
-    """Raw search with your own wording. Still dedupes and drops posts that don't match."""
+    """Search complaints with bounded equivalent wording while retaining a single budgeted fan-out."""
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
     query = query.strip()
@@ -711,32 +799,59 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
         raise ValueError("subreddit must be a string of at most 80 characters")
     limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 20, 30))
     names = [s for s in (sources or ["hn", "se", "reddit"]) if s in S.SOURCES]
+    variants = [query] + query_expansions(query, max_variants=4)
     jobs = []
     for n in names:
         if n == "se":
-            jobs += [Job("se", query, {"site": s}, limit) for s in (se_sites or se_sites_for(query))[:3]]
-        elif n == "reddit":
-            jobs.append(Job("reddit", query, {"subreddit": subreddit} if subreddit else {}, limit))
+            # Keep the current site-focused budget; these sites have different
+            # vocabularies and the provider allows only two requests per call.
+            jobs += [Job("se", query, {"site": site}, limit) for site in (se_sites or se_sites_for(query))[:3]]
+        elif n in {"hn", "reddit", "github", "gitlab", "bluesky"}:
+            opts = {"subreddit": subreddit} if n == "reddit" and subreddit else {}
+            jobs += [Job(n, variant, opts, limit) for variant in variants[:2]]
         else:
+            # Structured endpoints and specialist sources get their original query.
             jobs.append(Job(n, query, {}, limit))
+    scheduled_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
+    scheduled_variants = list(dict.fromkeys(job.query for job in scheduled_jobs))
     raw, status = run_jobs(jobs)
-    # This tool is explicitly for complaint discovery, not general topic search.
-    # Treat query words as a retrieval target, but label missing hard constraints
-    # instead of dropping every useful complaint that doesn't repeat each term.
-    ranked, _ = _rank(raw, [query], require_pain=True, enforce_constraints=False)
+    ranked, misses = _rank(raw, [query], require_pain=True, enforce_constraints=False)
+    selected = ranked[: max(5, min(limit, 60))]
     results = []
-    for _, post, rel, text in ranked[: max(5, min(limit, 60))]:
+    for _, post, rel, text in selected:
         item = _compact(post, rel, text)
         item["missing_constraints"] = missing_constraints(query, text)
         results.append(item)
+    near_misses = []
+    for _, post, rel, text in misses[:5]:
+        profile = signal_profile(text)
+        if profile["promotional"]:
+            reason = "promotional product announcement; inspect as a product lead, not independent pain evidence"
+        elif profile["evidence_kind"] == "solution_showcase":
+            reason = "solution showcase or existing-product lead; inspect separately from independent pain evidence"
+        else:
+            reason = "topic-adjacent candidate did not clear the complaint or full relevance checks"
+        near_misses.append({
+            "title": post.title[:140],
+            "url": post.url,
+            "source": post.source,
+            "evidence_kind": profile["evidence_kind"],
+            "missing_constraints": missing_constraints(query, text),
+            "reason": reason,
+        })
     return {
         "query": query,
         "coverage": status,
         "posts_fetched": len(raw),
         "results": results,
+        "near_misses": near_misses,
+        "query_variants_scheduled": scheduled_variants,
+        "evidence_summary": _evidence_summary([item[1] for item in selected]),
+        "search_diagnostics": _search_diagnostics(len(selected), len(misses), status, scheduled_variants),
         "note": (
-            "Results are topic-matched complaint leads. Inspect missing_constraints: a result can discuss the problem "
-            "without explicitly demonstrating every constraint in the query. Promotional launch posts are excluded."
+            "Results are topic-matched complaint leads, not proof of prevalence. Inspect missing_constraints and evidence_kind. "
+            "Promotional launches and detected solution showcases are excluded from complaint results and shown as near-miss product leads where relevant. "
+            "Query alternatives share the same provider/request budget; no second search phase or paid fallback is used."
         ),
     }
 
