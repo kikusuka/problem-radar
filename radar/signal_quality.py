@@ -137,8 +137,42 @@ _PROMO_CTA = re.compile(
 )
 
 
+# Evidence labels are lightweight, inspectable heuristics—not truth labels.
+_FAILURE_CONTEXT = re.compile(
+    r"\b(?:crash(?:es|ed|ing)?|out[-\s]?of[-\s]?memory|oom|memory leak|"
+    r"freez(?:e|es|ing|en)?|hangs?|hung|fails? to load|doesn't work|does not work|"
+    r"not working|bug|error|broken|unusable)\b",
+    re.IGNORECASE,
+)
+_WORKAROUND_CONTEXT = re.compile(
+    r"\b(?:workaround|work-around|work around|hack(?:ed)? together|manual(?:ly)?|"
+    r"copy[- ]?paste|spreadsheet|script to|built my own)\b",
+    re.IGNORECASE,
+)
+_HELP_REQUEST = re.compile(
+    r"\b(?:how do i|how can i|anyone know|does anyone know|any recommendations|"
+    r"what do you use|looking for|is there a way|is there a tool|can someone recommend)\b",
+    re.IGNORECASE,
+)
+_PRODUCT_COMPARISON = re.compile(
+    r"\b(?:versus|\bvs\.?\b|alternative to|alternatives to|replacement for|"
+    r"compared with|compared to|better than|worse than)\b",
+    re.IGNORECASE,
+)
+_SOLUTION_TITLE = re.compile(
+    r"^\s*(?:show hn:\s*)?[a-z][a-z0-9_.+-]{1,35}\s*(?:[-—:|]\s+).{0,160}"
+    r"\b(?:library|sdk|framework|toolkit|app|package|server|client|extension|plugin|repo|project)\b",
+    re.IGNORECASE,
+)
+_SOLUTION_INTRO = re.compile(
+    r"\b(?:introducing|meet)\s+[a-z][a-z0-9_.+-]{2,}\b|"
+    r"\bmy new (?:app|tool|library|sdk|framework|package|assistant|model)\b|"
+    r"\b(?:open[- ]source )?(?:library|sdk|framework|toolkit|package) for\b",
+    re.IGNORECASE,
+)
+
 def signal_profile(text: str, max_matches: int = 8) -> dict:
-    """Return concise, transparent phrase evidence and a capped ranking bonus."""
+    """Return transparent pain-signal annotations and a coarse evidence class."""
     text = text or ""
     promotional = bool(
         (_PROMO_TRIGGER.search(text) and _PROMO_CTA.search(text))
@@ -172,12 +206,29 @@ def signal_profile(text: str, max_matches: int = 8) -> dict:
         for _, tier, phrase, category in found[:max(0, max_matches)]
     ]
 
-    # Only a multi-word, explicit frustration/breakage phrase can independently
-    # satisfy the pain gate. Generic single words like "broken" or "worst" cannot.
+    # A generic single word such as "broken" is not enough to pass the complaint
+    # gate. This flag remains intentionally stricter than the evidence class.
     explicit_pain = any(
         tier == "pain_point" and len(phrase.split()) >= 2
         for _, tier, phrase, _ in found
     )
+
+    if promotional:
+        evidence_kind = "product_announcement"
+    elif _FAILURE_CONTEXT.search(text):
+        evidence_kind = "technical_failure_report"
+    elif explicit_pain:
+        evidence_kind = "reported_complaint"
+    elif _WORKAROUND_CONTEXT.search(text):
+        evidence_kind = "workaround_or_manual_process"
+    elif _SOLUTION_TITLE.search(text) or _SOLUTION_INTRO.search(text):
+        evidence_kind = "solution_showcase"
+    elif _HELP_REQUEST.search(text):
+        evidence_kind = "help_request"
+    elif _PRODUCT_COMPARISON.search(text):
+        evidence_kind = "product_comparison"
+    else:
+        evidence_kind = "general_discussion"
 
     return {
         "counts": counts,
@@ -185,4 +236,5 @@ def signal_profile(text: str, max_matches: int = 8) -> dict:
         "weighted_score": min(3.0, raw_score),
         "promotional": promotional,
         "explicit_pain": explicit_pain,
+        "evidence_kind": evidence_kind,
     }
