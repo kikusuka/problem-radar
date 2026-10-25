@@ -811,3 +811,34 @@ def test_denied_android_support_does_not_satisfy_platform_constraint():
         "Android app for offline note-taking",
         "This app is not supported on Android; use the iOS version instead."
     )
+
+
+def test_source_selection_lists_are_bounded_and_deduplicated(monkeypatch):
+    with pytest.raises(ValueError, match="at most 12 items"):
+        research.plan("offline android assistant", sources=["hn"] * 13)
+    with pytest.raises(ValueError, match="at most 12 items"):
+        research.plan("offline android assistant", se_sites=["android"] * 13)
+
+    hn_jobs = [j for j in research.plan("accounting", sources=["hn", "hn"]) if j.source == "hn"]
+    assert len(hn_jobs) == len(research.plan("accounting", sources=["hn"]))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("source list size must be validated before source work")
+    monkeypatch.setattr(research, "run_jobs", forbidden)
+    with pytest.raises(ValueError, match="at most 12 items"):
+        research.search("offline android", sources=["hn"] * 13)
+
+
+def test_validation_does_not_count_negated_payment_as_spend_or_intent(monkeypatch):
+    p = P("hn", 1210, "Offline AI assistant for low-end Android phones",
+          "I did not pay for the offline AI assistant on my low-end Android phone. It is frustrating and I wish it worked better.", "a")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([p], {"hn": {"state": "ok", "posts": 1}}))
+    out = research.validate("offline AI assistant for low-end Android phones", "offline Android AI")
+    assert out["counts"]["paying_signals"] == 0
+    assert out["counts"]["willingness_to_pay_signals"] == 0
+
+
+def test_research_reports_planned_completed_and_succeeded_jobs_separately():
+    out = research.research("accounting invoices", force=True)
+    assert out["queries_planned"] >= out["queries_run"] >= out["queries_succeeded"]
+    assert "queries_timed_out" in out
