@@ -802,6 +802,7 @@ def test_query_length_is_bounded_before_source_work(monkeypatch):
 def test_constraint_match_rejects_explicit_contradictions():
     niche = "offline AI assistant for low-end Android phones"
     assert not pain.constraints_match(niche, "Android assistant, but cloud-only and requires an internet connection")
+    assert not pain.constraints_match("local AI assistant for Android", "This is not local AI; all inference runs on a cloud server.")
     assert not pain.constraints_match(niche, "Offline Android assistant that requires at least 12 GB RAM")
     assert not pain.constraints_match("free Android assistant", "Android assistant; subscription required and not free")
     assert pain.constraints_match(niche, "Fully local inference runs offline on low-end Android phones with 4 GB RAM")
