@@ -50,15 +50,17 @@ retrieves public-source leads and does not call a hosted LLM or embedding API.
 
 To protect the shared free-tier instance, each query/problem is capped at 400 characters; `also` accepts up to
 four related terms of at most 200 characters each; source and Stack Exchange site selectors are bounded and
-deduplicated. One tool call can submit at most 16 source jobs. Across concurrent calls, the shared executor has
+deduplicated. One tool call can schedule at most 16 source jobs across all search phases. Default niche research
+reserves up to two of those jobs for a DuckDuckGo fallback when the first pass is thin. Across concurrent calls, the shared executor has
 8 workers and a 32-job in-flight cap. Queued work that misses the request deadline is cancelled where possible;
 running work retains its capacity slot until it actually finishes. These are workload guardrails, not per-client
 rate limiting or DDoS protection: public visitors still share the same upstream API quotas and source capacity.
 
-Read coverage before drawing conclusions. `queries_planned` counts jobs planned, `queries_run` counts jobs that
-completed, `queries_succeeded` counts successful source responses, `queries_timed_out` counts running jobs
-that missed the deadline, and `queries_cancelled_before_start` counts queued jobs cancelled after the deadline.
-Per-source coverage also reports partial/request-limited work.
+Read coverage before drawing conclusions. `queries_planned` counts all planned jobs (including fallback candidates
+when that phase is triggered), `queries_budgeted` counts jobs admitted under the 16-job request cap, and
+`queries_run` counts jobs that completed. `queries_succeeded` counts successful source responses,
+`queries_timed_out` counts running jobs that missed the deadline, and `queries_cancelled_before_start` counts
+queued jobs cancelled after the deadline. Per-source coverage also reports partial/request-limited work.
 
 For niche research and solution checks, explicitly stated requirements such as offline operation, low-resource
 hardware, affordability and platform can exclude candidates that do not demonstrate them. Those candidates may
@@ -90,8 +92,9 @@ problem validated from posts alone.
 `check_if_solved` looks beyond software repos: GitHub projects (stars, last update, archived), Show HN and product
 discussion, recent papers (citations), and petitions. It returns a hint (`well_served_for_the_general_case`, `partially_solved`, `no_clear_solution_found`, or
 `inconclusive_constraints_not_matched`) plus reasons and a guide to the usual opening: who or what the best
-solution leaves out (price, language, region, age, disability, offline use, a niche workflow). Absence of results is
-never proof; the tool says so.
+solution leaves out (price, language, region, age, disability, offline use, a niche workflow). A paper or petition
+can be relevant context, but neither alone proves a working solution exists; research-only findings do not trigger
+`partially_solved` by themselves. Absence of results is never proof; the tool says so.
 
 ## How it differs from other tools
 
