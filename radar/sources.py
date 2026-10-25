@@ -287,7 +287,70 @@ def europepmc(query: str, limit: int = 20, **_) -> Result:
     return Result(out)
 
 
-# ------------------------------------------------- DuckDuckGo (best-effort fallback, no key)
+# ------------------------------------------------- Tavily (official web-search API; optional free-tier key)
+def tavily(query: str, limit: int = 10, **_) -> Result:
+    """Official web search for thin-result fallback. Uses basic depth to conserve free credits.
+
+    Tavily's free plan currently includes 1,000 credits/month without a credit card.
+    We never upgrade, retry exhausted quotas, or fall back to a paid plan.
+    """
+    api_key = os.environ.get("TAVILY_API_KEY", "").strip()
+    if not api_key:
+        return Result([], True, "skipped (TAVILY_API_KEY is not set)", skipped=True)
+
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "topic": "general",
+        "search_depth": "basic",
+        "max_results": max(1, min(int(limit), 10)),
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    try:
+        r = httpx.post(
+            "https://api.tavily.com/search",
+            json=payload,
+            timeout=TIMEOUT,
+            headers={"User-Agent": UA},
+        )
+    except Exception as e:
+        return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
+
+    if r.status_code == 429:
+        return Result([], False, "rate limited or monthly credits exhausted (429); no retry attempted")
+    if r.status_code in (401, 403):
+        return Result([], False, f"Tavily authentication or access rejected ({r.status_code})")
+    if r.status_code == 402:
+        return Result([], False, "Tavily plan or credits unavailable (402); check free-plan quota")
+    if r.status_code >= 400:
+        return Result([], False, f"Tavily HTTP {r.status_code}")
+
+    try:
+        data = r.json()
+    except Exception as e:
+        return Result([], False, f"invalid JSON response: {type(e).__name__}")
+
+    from urllib.parse import urlparse
+    out = []
+    for item in (data.get("results") or [])[:payload["max_results"]]:
+        url = (item.get("url") or "").strip()
+        if not url.startswith(("https://", "http://")):
+            continue
+        title = _plain(item.get("title") or "")
+        text = _plain(item.get("content") or item.get("raw_content") or "")
+        if not (title or text):
+            continue
+        domain = urlparse(url).hostname or ""
+        published = str(item.get("published_date") or "")[:10]
+        out.append(Post(
+            "tavily", f"tavily-{url}", title, text[:1500], url, domain,
+            0, 0, published, {"site": domain, "search_score": item.get("score")},
+        ))
+    return Result(out)
+
+
+# ------------------------------------------------- DuckDuckGo (opt-in, best-effort fallback, no key)
 _ddg_cooldown = {"until": 0.0}
 DDG_ENTRY = re.compile(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>', re.S)
 
@@ -307,8 +370,8 @@ def ddg(query: str, limit: int = 10, **_) -> Result:
     """DuckDuckGo HTML results. NO official API exists: this reads a public page, which DuckDuckGo may block or disallow,
     especially from a shared server IP. It is a last-resort fallback: it backs off for 10 minutes when blocked and
     never raises. Results are web pages (not complaints), so treat them as leads to verify."""
-    if os.environ.get("DISABLE_DDG") == "1":
-        return Result([], True, "disabled (DISABLE_DDG=1)", skipped=True)
+    if os.environ.get("DISABLE_DDG") == "1" or os.environ.get("ENABLE_DDG_FALLBACK") != "1":
+        return Result([], True, "disabled (set ENABLE_DDG_FALLBACK=1 to opt in)", skipped=True)
     if time.time() < _ddg_cooldown["until"]:
         return Result([], False, "blocked or rate limited; cooling down")
     try:
@@ -365,7 +428,7 @@ def _abstract(inv: dict | None) -> str:
 
 
 def scholar(query: str, limit: int = 20, years: int = 4, **_) -> Result:
-    """Recent papers from OpenAlex. Set OPENALEX_MAILTO for the faster polite pool."""
+    """Recent OpenAlex papers. OPENALEX_API_KEY raises the free daily budget; OPENALEX_MAILTO identifies polite use."""
     since = time.strftime("%Y-01-01", time.gmtime(time.time() - years * 365 * 86400))
     params = {
         "search": query,
@@ -373,6 +436,8 @@ def scholar(query: str, limit: int = 20, years: int = 4, **_) -> Result:
         "filter": f"from_publication_date:{since}",
         "select": "id,doi,title,publication_year,cited_by_count,abstract_inverted_index",
     }
+    if os.environ.get("OPENALEX_API_KEY"):
+        params["api_key"] = os.environ["OPENALEX_API_KEY"]
     if os.environ.get("OPENALEX_MAILTO"):
         params["mailto"] = os.environ["OPENALEX_MAILTO"]
     data, err = _get("https://api.openalex.org/works", params)
@@ -460,7 +525,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "ddg": ddg, "github": github,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "tavily": tavily, "ddg": ddg, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -468,14 +533,15 @@ def enabled() -> dict:
     """What is available right now, for the source_status tool."""
     reddit_mode = "oauth" if (os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET")) else "public (often blocked on cloud hosts)"
     return {
-        "scholar": {"enabled": True, "note": "OpenAlex papers; no key" + ("" if os.environ.get("OPENALEX_MAILTO") else "; set OPENALEX_MAILTO for faster access")},
+        "scholar": {"enabled": True, "note": "OpenAlex papers; free key raises the daily budget" + (" (OPENALEX_API_KEY set)" if os.environ.get("OPENALEX_API_KEY") else "; set OPENALEX_API_KEY for the larger free daily budget") + ("; polite email set" if os.environ.get("OPENALEX_MAILTO") else "")},
         "github_repo": {"enabled": True, "note": "GitHub repository search, used by check_if_solved"},
         "petitions": {"enabled": True, "note": "UK Parliament petitions with signature counts; no key; UK only"},
         "nyc311": {"enabled": True, "note": "NYC 311 complaint counts, last 12 months; no key; NYC only"},
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
-        "ddg": {"enabled": os.environ.get("DISABLE_DDG") != "1", "note": "DuckDuckGo page fallback, best effort and used only when results are thin; may be blocked from a shared IP"},
+        "tavily": {"enabled": bool(os.environ.get("TAVILY_API_KEY", "").strip()), "note": ("official basic web search; free tier currently 1,000 credits/month; no retry on quota errors" if os.environ.get("TAVILY_API_KEY", "").strip() else "optional official web fallback; set TAVILY_API_KEY (free tier currently 1,000 credits/month, no card required)")},
+        "ddg": {"enabled": os.environ.get("ENABLE_DDG_FALLBACK") == "1" and os.environ.get("DISABLE_DDG") != "1", "note": "HTML scraping fallback, disabled by default; set ENABLE_DDG_FALLBACK=1 to opt in; can be blocked or changed upstream"},
         "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},
