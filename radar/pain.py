@@ -185,9 +185,9 @@ def query_variants(problem: str) -> list[str]:
     raw = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", problem.lower())
     acronyms = {w.lower() for w in re.findall(r"\b[A-Z][A-Z0-9]{1,}\b", problem)}
     preserve_patterns = (
-        r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bon[- ]device\b|\bon device\b",
+        r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bon[- ]device\b|\bon device\b",
         r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]cost\b|\blow[- ]spec\b"
-        r"|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\baffordable\b|\bprivacy[- ]first\b",
+        r"|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b|\baffordable\b|\bprivacy[- ]first\b",
         r"\bandroid\b|\bios\b|\biphone\b|\bipad\b|\bwindows\b|\blinux\b|\bmacos\b|\bchromeos\b",
         r"\bopen[- ]source\b|\bno[- ]cost\b|\bfree\b|\bprivate\b|\bprivacy\b|\blocal (?:ai|model|llm|inference|execution|processing)\b|\bruns? locally\b|\bfully local\b",
     )
