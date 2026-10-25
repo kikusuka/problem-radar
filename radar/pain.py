@@ -567,6 +567,13 @@ _CORE_TOPIC_GROUPS = {
 }
 
 
+_AI_MODEL_SPECIFIC_CUE = re.compile(
+    r"\b(?:llms?|large language models?|small language models?|tiny language models?|"
+    r"llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\b",
+    re.I,
+)
+
+
 def topic_fit(query: str, text: str, title: str = "") -> bool:
     """Require topical anchors and retain explicit technical failure intent.
 
@@ -600,6 +607,13 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
     required_core = {key for key, _ in groups if key in _CORE_TOPIC_GROUPS}
     if not required_core.issubset(matched_keys):
         return False
+
+    # If the user specifically asked about an LLM/language model, generic mentions of
+    # "AI" or "Android" are not enough. Require the candidate to mention an LLM family,
+    # runtime, model format, or the phrase "language model" itself.
+    if any(key == "ai_language_model" for key, _ in groups):
+        if _AI_MODEL_SPECIFIC_CUE.search(query or "") and not _AI_MODEL_SPECIFIC_CUE.search(candidate):
+            return False
 
     # Retain the broad overlap threshold for other query words, but don't let
     # generic/platform/failure anchors compensate for a missing domain concept.
