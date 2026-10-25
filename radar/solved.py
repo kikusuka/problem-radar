@@ -13,8 +13,9 @@ import re
 import time
 
 from . import sources as S
-from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_fit
-from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
+from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_fit, topic_fit_with_alternates
+from .research import (MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, _limit_jobs, run_jobs,
+                       web_suggestions, cached_result, SOURCE_REQUEST_COST, SOURCE_PROVIDER_GROUP)
 
 SOLUTION_RE = re.compile(
     r"\b(alternative|alternatives|saas|plugin|extension|startup|launched|i built|we built|show hn|open[- ]source|app that|"
@@ -107,7 +108,7 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
     return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "caveat": caveat}
 
 
-def check(problem: str, lens: str = "software") -> dict:
+def _check_compute(problem: str, lens: str = "software") -> dict:
     if not isinstance(problem, str) or not problem.strip():
         raise ValueError("problem must be a non-empty string")
     problem = problem.strip()
@@ -128,6 +129,7 @@ def check(problem: str, lens: str = "software") -> dict:
             jobs += [Job("reddit", f"{v} diy", {}, 15), Job("reddit", f"{v} I bought", {}, 15)]
         if lens == "policy":
             jobs += [Job("petitions", v, {}, 15), Job("reddit", f"{v} law OR policy OR campaign", {}, 15)]
+    budgeted_jobs = _limit_jobs(jobs)
     raw, status = run_jobs(jobs)
 
     key = variants[0]
@@ -139,7 +141,7 @@ def check(problem: str, lens: str = "software") -> dict:
         rel = max((relevance(variant, text) for variant in variants), default=0.0)
         # Loose token overlap is only a prefilter. Require subject anchors too, so
         # generic words like "running", "local", or "project" cannot pass as relevance.
-        if rel < 0.5 or not topic_fit(problem, text, p.title):
+        if rel < 0.5 or not topic_fit_with_alternates(problem, variants[1:], text, p.title):
             continue
         if not constraints_match(problem, text):
             constraint_mismatch_count += 1
@@ -171,10 +173,22 @@ def check(problem: str, lens: str = "software") -> dict:
         assessment["hint"] = "inconclusive_constraints_not_matched"
         assessment["reasons"] = [f"{constraint_mismatch_count} related candidate(s) did not demonstrate all explicit constraints."]
         assessment["caveat"] += " A candidate was excluded if it did not show the requested offline, hardware/resource or platform constraint; inspect related results and broaden the search before concluding."
+    provider_request_counts = getattr(status, "provider_request_counts", {})
+    budgeted_providers = {SOURCE_PROVIDER_GROUP.get(j.source, j.source) for j in budgeted_jobs}
+    provider_request_units_budgeted = (
+        sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in budgeted_jobs)
+        + sum(S.startup_request_cost(provider) for provider in budgeted_providers)
+    )
     return {
         "problem": problem,
         "lens": lens,
         "searched_as": variants,
+        "queries_planned": len(jobs),
+        "queries_budgeted": len(budgeted_jobs),
+        "provider_request_units_budgeted": provider_request_units_budgeted,
+        "provider_request_units_used": sum(provider_request_counts.values()),
+        "provider_request_counts": provider_request_counts,
+        "provider_request_denials": getattr(status, "provider_request_denials", {}),
         "required_constraints": missing_constraints(problem, ""),
         "constraint_candidates_excluded": constraint_mismatch_count,
         "constraint_near_misses": [item for _, item in constraint_near_misses[:5]],
@@ -192,3 +206,13 @@ def check(problem: str, lens: str = "software") -> dict:
         "web_search_note": "If you have a web search tool, run these: this tool cannot see shops, review sites or most news.",
         "next": "Call validate_problem to check demand, then talk to 5 real people about the gap you found.",
     }
+
+
+def check(problem: str, lens: str = "software") -> dict:
+    """Cache existing-solution checks and coalesce concurrent requests for the same problem."""
+    normalized_lens = lens if lens in ("software", "hardware", "policy", "research", "any") else "software"
+    return cached_result(
+        "check-if-solved",
+        {"problem": problem, "lens": normalized_lens},
+        lambda: _check_compute(problem, normalized_lens),
+    )
