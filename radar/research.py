@@ -527,14 +527,12 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         rel = _rel(terms, text)
         community = p.meta.get("community")
         topic_terms = [t for t in terms if t and t.strip()]
-        topic_match = any(
-            relevance(t, text, loose=True) >= 0.25 and topic_fit(t, text, p.title)
-            for t in topic_terms
-        )
-        community_match = any(
-            relevance(t, text, loose=True) >= 0.5 and topic_fit(t, text, p.title)
-            for t in topic_terms
-        )
+        # Top results must directly match the topic, not just one loose word.
+        # Synonym-aware anchors are used to surface near-misses, not to bypass this gate.
+        topic_match = any(is_relevant(t, text) and topic_fit(t, text, p.title) for t in topic_terms)
+        # A post in a discovered adjacent community may use one familiar term ("hearing")
+        # rather than the full phrase ("hearing aids"); keep that separate from general search.
+        community_match = any(relevance(t, text, loose=True) >= 0.5 for t in topic_terms)
         # For very short topics, a matching community name can supply context that the post omits.
         community_name_match = (
             community == "tight"
@@ -565,7 +563,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
         signal_bonus = min(1.5, profile["weighted_score"]) * (0.5 if profile["promotional"] else 1.0)
         score = heat(text, p.score, p.comments) + signal_bonus + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
-        about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text) or any(topic_fit(t, text, p.title) for t in topic_terms)
+        about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
         if not about or not topic_match:
             if (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)) and any(topic_fit(t, text, p.title) for t in topic_terms):
                 misses.append((score, p, rel, text))
