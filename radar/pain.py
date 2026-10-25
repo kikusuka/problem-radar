@@ -411,7 +411,7 @@ _TOPIC_CONSTRAINT_WORDS = {
     "local", "on-device", "device", "fully", "cloud", "remote", "server-only",
     "low-end", "low-ram", "low-memory", "low-resource", "low-cost", "low-spec",
     "entry-level", "limited", "affordable", "cheap", "budget", "privacy-first",
-    "private", "privacy", "android", "ios", "iphone", "ipad", "windows",
+    "private", "privacy", "device", "devices", "android", "ios", "iphone", "ipad", "windows",
     "linux", "macos", "chromeos", "no-internet", "no-network",
 }
 _TOPIC_ALIAS_GROUPS = {
@@ -432,6 +432,10 @@ _TOPIC_ALIAS_GROUPS = {
     },
     "invoice": {"invoice", "invoices", "invoicing", "billing", "accounts receivable"},
     "reconciliation": {"reconciliation", "reconcile", "reconciling", "matching", "bookkeeping", "accounting"},
+    "assistive_tech": {
+        "assistive", "assistive device", "assistive devices", "wheelchair", "wheelchairs",
+        "mobility aid", "mobility aids", "power assist", "accessibility aid", "accessibility aids",
+    },
 }
 _TOPIC_ALIAS_INDEX = {}
 for _group, _aliases in _TOPIC_ALIAS_GROUPS.items():
