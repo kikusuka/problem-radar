@@ -276,7 +276,15 @@ def _reddit_oauth() -> str:
 
 
 def reddit(query: str, limit: int = 20, subreddit: str | None = None, sort: str = "relevance", t: str = "all", **_) -> Result:
+    has_oauth_config = bool(
+        os.environ.get("REDDIT_CLIENT_ID", "").strip()
+        and os.environ.get("REDDIT_CLIENT_SECRET", "").strip()
+    )
     token = _reddit_oauth()
+    if has_oauth_config and not token:
+        # Do not silently fall back to anonymous Reddit after configured OAuth fails
+        # or the shared request budget blocks token acquisition.
+        return Result([], False, "configured Reddit OAuth unavailable; no anonymous fallback attempted")
     params = {"q": query, "sort": sort, "t": t, "limit": min(limit, 50)}
     if subreddit:
         params["restrict_sr"] = 1
