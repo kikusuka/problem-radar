@@ -104,7 +104,9 @@ def test_search_pain_with_custom_query():
 def test_validate_buckets():
     out = research.validate("quickbooks invoices reconciliation", "accounting")
     assert out["counts"]["existing_solutions"] >= 1
-    assert out["counts"]["paying_signals"] >= 1
+    # The only price in this fixture is a vendor-style product claim, not an independent
+    # user report, so it must not be counted as market spending evidence.
+    assert out["counts"]["paying_signals"] == 0
     assert out["counts"]["workaround_signals"] >= 1
     assert "validation_guide" in out
 
@@ -1281,7 +1283,7 @@ def test_related_pain_evidence_is_separate_from_strict_top_posts():
         "Android AI assistant keeps crashing on budget phones",
         "My local AI assistant on Android crashes after long prompts on my budget phone with 2 GB RAM. "
         "It is frustrating, and the assistant stops responding when memory runs out.",
-        score=4, comments=7,
+        "tester", score=4, comments=7,
     )
     ranked, misses = research._rank([candidate], [query])
     supporting = research._supporting_evidence(query, [], misses)
