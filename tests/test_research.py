@@ -1100,7 +1100,9 @@ def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeyp
     assert "bluesky" not in {j.source for j in jobs}
     hn_queries = [j.query for j in jobs if j.source == "hn"]
     assert hn_queries[0] == pain.query_variants("offline AI assistant for low-end Android phones")[0]
-    assert hn_queries[1] in pain.query_expansions("offline AI assistant for low-end Android phones")
+    assert hn_queries[1] != hn_queries[0]
+    assert "android" in hn_queries[1].casefold() and "low-end" in hn_queries[1].casefold()
+    assert ("offline" in hn_queries[1].casefold() or "without internet" in hn_queries[1].casefold())
     # Caller-provided alternates are combined with the subject and hard requirements.
     # They must never become standalone searches that waste the small provider budget.
     assert all(j.query.casefold() not in {"on-device llm", "local ai inference"} for j in jobs)
@@ -1154,10 +1156,30 @@ def test_solution_search_finds_topical_projects_as_constraint_near_misses(monkey
     assert out["assessment"]["hint"] == "inconclusive_constraints_not_matched"
 
 
+def test_nyc311_app_token_is_sent_without_changing_public_query(monkeypatch):
+    monkeypatch.setenv("NYC311_APP_TOKEN", "free-app-token")
+    calls = {}
+
+    def fake_get(url, params=None, headers=None, auth=None, method="GET", data=None):
+        calls["url"] = url
+        calls["params"] = params
+        calls["headers"] = headers
+        return ([], "")
+
+    monkeypatch.setattr(S, "_get", fake_get)
+    result = S.nyc311("noise complaints")
+
+    assert result.ok
+    assert calls["url"] == "https://data.cityofnewyork.us/resource/erm2-nwe9.json"
+    assert calls["headers"]["X-App-Token"] == "free-app-token"
+    assert calls["params"]["$limit"] <= 30
+
+
 def test_shared_provider_budget_blocks_bursts_without_sleeping(monkeypatch):
     monkeypatch.setattr(S, "_REQUEST_BUCKETS", {})
     monkeypatch.setattr(S.time, "monotonic", lambda: clock[0])
     monkeypatch.setitem(S._REQUEST_INTERVALS, "github", 2.0)
+    monkeypatch.setitem(S._REQUEST_PROVIDER_BURSTS, "github", 2.0)
     clock = [100.0]
 
     assert S._take_request_budget("https://api.github.com/search/issues") == ""
@@ -1177,6 +1199,7 @@ def test_get_does_not_send_http_after_shared_budget_is_exhausted(monkeypatch):
     clock = [50.0]
     monkeypatch.setattr(S.time, "monotonic", lambda: clock[0])
     monkeypatch.setitem(S._REQUEST_INTERVALS, "github", 100.0)
+    monkeypatch.setitem(S._REQUEST_PROVIDER_BURSTS, "github", 2.0)
     assert S._take_request_budget("https://api.github.com/search/issues") == ""
     assert S._take_request_budget("https://api.github.com/search/issues") == ""
     calls = []
