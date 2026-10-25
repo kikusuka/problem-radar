@@ -32,13 +32,13 @@ Try: *"Use problem-radar. I'm a mechanical engineering student with 6 months for
 
 | Lens | Searches for | Sources |
 |---|---|---|
-| `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, Bluesky, GitHub |
+| `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, Bluesky, GitHub, GitLab (with token) |
 | `hardware` | devices, products, DIY | Reddit, Bluesky, assistive-device reports, specialist Stack Exchange sites |
 | `policy` | rules, services, civic fixes | UK Parliament petitions, NYC 311, community posts |
 | `research` | open problems, thesis topics | OpenAlex, arXiv, Europe PMC, academia and science Stack Exchange sites |
 | `any` | lets the analyst choose | general sources |
 
-Civic data covers only the UK and New York City today. Bluesky and arXiv need no key; optional keys widen
+Civic data covers only the UK and New York City today. Bluesky and arXiv need no key; GitLab issue search is enabled when `GITLAB_TOKEN` is set; optional keys widen
 coverage (see `.env.example`). Every result includes a `coverage` block per source (`ok`, `partial`, `failed`,
 `skipped`) with the error, so nothing fails silently.
 
@@ -159,6 +159,12 @@ It is the best source for everyday problems, so add free credentials:
 Check Reddit's current API terms before publishing a public server that uses it.
 
 ## Additional public sources
+
+GitLab global issue search adds public bug reports and feature discussions from outside GitHub. It requires a
+free personal access token with the narrow `read_api` scope; set it as `GITLAB_TOKEN`. When the token is absent,
+GitLab is excluded from default searches rather than spending budget on a request that cannot work. See
+https://docs.gitlab.com/api/search/ and https://docs.gitlab.com/api/rest/authentication/.
+
 
 Bluesky is searched through its public read-only AppView endpoint and requires no key. It provides a complementary,
 recent social conversation stream, but it is not representative of the whole population and must not be treated as
