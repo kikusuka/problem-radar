@@ -62,11 +62,14 @@ running work retains its capacity slot until it actually finishes. These are wor
 rate limiting or DDoS protection: public visitors still share the same upstream API quotas and source capacity.
 
 Read coverage before drawing conclusions. `queries_planned` counts planned source jobs; `queries_budgeted`
-counts jobs admitted after the global and per-provider caps, while `provider_request_units_budgeted` estimates
-the outbound requests those jobs can consume. `queries_run` counts completed jobs. `queries_succeeded` counts
-successful source responses; `queries_timed_out` counts running jobs that missed the deadline; and
-`queries_cancelled_before_start` counts queued jobs cancelled after the deadline. Per-source coverage reports
-partial work and work omitted by the request/provider limits.
+counts jobs admitted after the job/provider caps, while `provider_request_units_budgeted` estimates outbound
+requests admitted by the planner. `provider_request_units_used`, `provider_request_counts`, and
+`provider_request_denials` report actual outbound request attempts enforced by the HTTP layer. `queries_run`
+counts completed jobs; `queries_succeeded` counts successful source responses; `queries_timed_out` counts
+running jobs that missed the deadline; and `queries_cancelled_before_start` counts queued jobs cancelled after
+the deadline. Per-source coverage reports partial work and work omitted by the request/provider limits. When
+hard constraints exclude an otherwise topical pain report, inspect `supporting_evidence` and its
+`missing_constraints`; that tier does not count as a qualifying top result.
 
 For niche research and solution checks, explicitly stated requirements such as offline operation, low-resource
 hardware, affordability and platform can exclude candidates that do not demonstrate them. Those candidates may
@@ -185,13 +188,14 @@ GitLab is excluded from default searches rather than spending budget on a reques
 https://docs.gitlab.com/api/search/ and https://docs.gitlab.com/api/rest/authentication/.
 
 
-Bluesky's public read-only AppView adapter requires no key, but is currently opt-in because the live endpoint returned HTTP 403. Re-test it before making it a default source.
-recent social conversation stream, but it is not representative of the whole population and must not be treated as
-verified demand.
+Bluesky's public read-only AppView adapter requires no key, but it is currently excluded from default searches
+because the live hosted endpoint returned HTTP 403. Do not count it as available coverage until its public endpoint
+is verified again. When enabled, its posts are unverified leads rather than representative evidence of demand.
 
 arXiv adds open technical preprints and abstracts, particularly useful for AI, computer science, and engineering
-research gaps. No key is required. The adapter enforces arXiv's request-spacing guidance, so concurrent requests
-can queue and research runs can take longer when the source is busy.
+research gaps. No key is required. The adapter allows at most one arXiv query per MCP tool call and respects
+process-wide request-spacing guidance; when requests are too close together, the source is deferred instead of
+holding a worker thread or retrying.
 
 Crossref and PubMed/NCBI are possible future additions, but they mostly overlap with the scholarly metadata already
 provided by OpenAlex and Europe PMC. Before adding them, benchmark whether they supply genuinely new abstracts or
@@ -226,5 +230,6 @@ invisible to the built-in sources).
 
 - Posts show complaints, not proven demand. Talk to 5 real people before you commit.
 - Online sources skew English-speaking and online. People without a voice online are under-represented.
-- Free API quotas are shared and limited; no public API should be described as unlimited. The server caps provider requests per tool call, avoids automatic retries and fallbacks, and caches successful research for 36 hours. The in-memory/disk cache is not durable shared storage on ephemeral hosts.
+- Free API quotas are shared and limited; no public API should be described as unlimited. Every actual outbound request passes through a per-tool-call provider budget, and an in-process per-provider minute limiter provides an additional guard. No automatic retries, generic web-search fallback, or paid-provider substitution is enabled.
+- Duplicate calls within one process are coalesced. Successful research is cached for 36 hours; empty or limited results are cached only briefly to avoid spending the same free quota repeatedly. Render's local filesystem can be ephemeral, and these in-memory request limits/cache are not shared across multiple instances or retained across restarts.
 - Check each platform's terms before publishing widely.
