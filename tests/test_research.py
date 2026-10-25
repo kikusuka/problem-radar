@@ -44,7 +44,7 @@ def test_coverage_reports_every_source_state():
     out = research.research("accounting invoices", force=True)
     cov = out["coverage"]
     assert cov["hn"]["state"] == "ok"
-    assert cov["se"]["state"] == "ok"
+    assert cov["se"]["state"] == "partial"  # the public per-request budget intentionally limits excess source jobs
     assert cov["reddit"]["state"] == "failed" and "403" in cov["reddit"]["errors"][0]
     assert "web" not in cov  # no paid or limited web search; the chatting LLM uses its own
 
@@ -240,7 +240,8 @@ def test_relevance_ignores_stopwords_and_requires_all_words_for_short_topics():
 
 def test_query_variants_shorten_long_problem_statements():
     v = pain.query_variants("low-cost assistive device for people with limited hand mobility")
-    assert v[0] == "assistive device hand mobility" and len(v[1].split()) == 2
+    assert v[0] == "low-cost assistive device hand mobility"
+    assert "low-cost" in v[1] and len(v[1].split()) >= 3
 
 
 def test_plan_is_broad_first_not_exact_phrase_only():
@@ -262,7 +263,7 @@ def test_hardware_with_no_results_is_inconclusive_not_unsolved(monkeypatch):
     out = solved.check("low-cost assistive device for limited hand mobility", "hardware")
     a = out["assessment"]
     assert a["hint"] == "inconclusive_products_not_covered" and "retail" in a["caveat"]
-    assert out["searched_as"][0] == "assistive device hand mobility"
+    assert out["searched_as"][0] == "low-cost assistive device hand mobility"
 
 
 def test_plenty_of_irrelevant_results_means_no_clear_solution(monkeypatch):
@@ -694,6 +695,7 @@ def test_timed_out_source_job_keeps_its_global_capacity_slot(monkeypatch):
         _, first = research.run_jobs([research.Job("hn", "first")])
         assert started.wait(timeout=1)
         assert first["hn"]["errors"] == ["timed out"]
+        assert first["hn"]["timed_out"] == 1
 
         _, second = research.run_jobs([research.Job("hn", "second")])
         assert second["hn"]["capacity_limited"] is True
@@ -724,3 +726,122 @@ def test_personal_json_tools_refuse_network_transport():
     )
     assert result.returncode != 0
     assert "local stdio use only" in result.stderr
+
+
+# Constraint-aware retrieval and public free-tier budget regressions.
+def test_query_variants_preserve_offline_low_resource_and_platform_constraints():
+    phrase = "Students with low-end Android phones need an AI assistant that works offline because mobile data is unreliable"
+    variants = pain.query_variants(phrase)
+    assert len(variants) >= 1
+    for term in ("offline", "low-end", "android"):
+        assert term in variants[0].lower()
+        assert all(term in variant.lower() for variant in variants)
+
+
+def test_ranking_requires_explicit_hard_constraints_even_with_topic_overlap():
+    niche = "offline AI assistant for low-end Android phones"
+    valid = P("hn", 1201, "Offline AI assistant for low-end Android phones",
+              "This runs offline on low-end Android phones with limited RAM; it is frustrating and I wish there were a better way.", "a")
+    misses_resource = P("hn", 1202, "Offline AI assistant for Android",
+                        "This is frustrating; I have to manually configure it. The assistant runs offline on Android but needs a flagship phone with 12 GB RAM.", "b")
+    ranked, near = research._rank([valid, misses_resource], [niche])
+    assert [item[1].id for item in ranked] == ["hn-1201"]
+    assert any(item[1].id == "hn-1202" for item in near)
+    assert "low-resource hardware" in pain.missing_constraints(niche, misses_resource.title + " " + misses_resource.text)
+
+
+def test_validation_does_not_attach_payment_or_workaround_to_an_unrelated_sentence(monkeypatch):
+    p = P("hn", 1203, "Quickbooks invoices are frustrating",
+          "I paid $500 for a laptop. For rent, I use a spreadsheet and copy paste the numbers.", "a")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([p], {"hn": {"state": "ok", "posts": 1}}))
+    out = research.validate("quickbooks invoices reconciliation", "accounting")
+    assert out["counts"]["paying_signals"] == 0
+    assert out["counts"]["willingness_to_pay_signals"] == 0
+    assert out["counts"]["workaround_signals"] == 0
+    assert out["evidence_status"] == "insufficient_evidence"
+    assert "does not prove" in out["evidence_note"]
+
+
+def test_validation_separates_existing_spend_from_explicit_willingness_to_pay(monkeypatch):
+    p = P("hn", 1204, "Offline AI assistant for low-end Android phones",
+          "I would pay $5 a month for an offline AI assistant on a low-end Android phone.", "a")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([p], {"hn": {"state": "ok", "posts": 1}, "reddit": {"state": "ok", "posts": 0}}))
+    out = research.validate("offline AI assistant for low-end Android phones", "offline Android AI")
+    assert out["counts"]["paying_signals"] == 0
+    assert out["counts"]["willingness_to_pay_signals"] == 1
+    assert out["required_constraints"] == ["offline operation", "low-resource hardware", "Android platform"]
+
+
+def test_public_request_job_budget_is_bounded_and_source_diverse(monkeypatch):
+    calls = []
+    for source in ("hn", "reddit", "se"):
+        def fake(query, limit=20, _source=source, **kwargs):
+            calls.append((_source, query))
+            return S.Result([])
+        monkeypatch.setitem(S.SOURCES, source, fake)
+    jobs = [research.Job(source, f"{source}-{i}") for i in range(10) for source in ("hn", "reddit", "se")]
+    _, status = research.run_jobs(jobs)
+    assert len(calls) <= research.MAX_JOBS_PER_REQUEST
+    assert all(status[source]["request_limited"] for source in ("hn", "reddit", "se"))
+    assert all(status[source]["state"] == "partial" for source in ("hn", "reddit", "se"))
+    assert len({source for source, _ in calls}) == 3
+
+
+def test_query_length_is_bounded_before_source_work(monkeypatch):
+    def forbidden(*args, **kwargs):
+        pytest.fail("oversized query must be rejected before searching")
+    monkeypatch.setattr(research, "run_jobs", forbidden)
+    with pytest.raises(ValueError, match="400 characters"):
+        research.research("a" * 401)
+    with pytest.raises(ValueError, match="400 characters"):
+        research.search("a" * 401)
+    with pytest.raises(ValueError, match="400 characters"):
+        research.validate("a" * 401)
+
+
+def test_constraint_match_rejects_explicit_contradictions():
+    niche = "offline AI assistant for low-end Android phones"
+    assert not pain.constraints_match(niche, "Android assistant, but cloud-only and requires an internet connection")
+    assert not pain.constraints_match("local AI assistant for Android", "This is not local AI; all inference runs on a cloud server.")
+    assert not pain.constraints_match(niche, "Offline Android assistant that requires at least 12 GB RAM")
+    assert not pain.constraints_match("free Android assistant", "Android assistant; subscription required and not free")
+    assert pain.constraints_match(niche, "Fully local inference runs offline on low-end Android phones with 4 GB RAM")
+
+
+def test_denied_android_support_does_not_satisfy_platform_constraint():
+    assert "Android platform" in pain.missing_constraints(
+        "Android app for offline note-taking",
+        "This app is not supported on Android; use the iOS version instead."
+    )
+
+
+def test_source_selection_lists_are_bounded_and_deduplicated(monkeypatch):
+    with pytest.raises(ValueError, match="at most 12 items"):
+        research.plan("offline android assistant", sources=["hn"] * 13)
+    with pytest.raises(ValueError, match="at most 12 items"):
+        research.plan("offline android assistant", se_sites=["android"] * 13)
+
+    hn_jobs = [j for j in research.plan("accounting", sources=["hn", "hn"]) if j.source == "hn"]
+    assert len(hn_jobs) == len(research.plan("accounting", sources=["hn"]))
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("source list size must be validated before source work")
+    monkeypatch.setattr(research, "run_jobs", forbidden)
+    with pytest.raises(ValueError, match="at most 12 items"):
+        research.search("offline android", sources=["hn"] * 13)
+
+
+def test_validation_does_not_count_negated_payment_as_spend_or_intent(monkeypatch):
+    p = P("hn", 1210, "Offline AI assistant for low-end Android phones",
+          "I did not pay for the offline AI assistant on my low-end Android phone. It is frustrating and I wish it worked better.", "a")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([p], {"hn": {"state": "ok", "posts": 1}}))
+    out = research.validate("offline AI assistant for low-end Android phones", "offline Android AI")
+    assert out["counts"]["paying_signals"] == 0
+    assert out["counts"]["willingness_to_pay_signals"] == 0
+
+
+def test_research_reports_planned_completed_and_succeeded_jobs_separately():
+    out = research.research("accounting invoices", force=True)
+    assert out["queries_planned"] >= out["queries_run"] >= out["queries_succeeded"]
+    assert "queries_timed_out" in out
+    assert "queries_cancelled_before_start" in out

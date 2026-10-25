@@ -13,8 +13,8 @@ import re
 import time
 
 from . import sources as S
-from .pain import query_variants, relevance
-from .research import Job, _body, _compact, _dedupe, run_jobs, web_suggestions
+from .pain import constraints_match, missing_constraints, query_variants, relevance
+from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
 SOLUTION_RE = re.compile(
     r"\b(alternative|alternatives|saas|plugin|extension|startup|launched|i built|we built|show hn|open[- ]source|app that|"
@@ -104,6 +104,8 @@ def check(problem: str, lens: str = "software") -> dict:
     if not isinstance(problem, str) or not problem.strip():
         raise ValueError("problem must be a non-empty string")
     problem = problem.strip()
+    if len(problem) > MAX_QUERY_CHARS:
+        raise ValueError(f"problem must be at most {MAX_QUERY_CHARS} characters")
     lens = lens if lens in ("software", "hardware", "policy", "research", "any") else "software"
     variants = query_variants(problem)
     jobs: list[Job] = []
@@ -121,10 +123,14 @@ def check(problem: str, lens: str = "software") -> dict:
 
     key = variants[0]
     projects, discussion, papers, actions = [], [], [], []
+    constraint_mismatch_count = 0
     for p in _dedupe(raw):
         text = _body(p)
-        rel = relevance(key, text)
+        rel = max((relevance(variant, text) for variant in variants), default=0.0)
         if rel < 0.5:
+            continue
+        if not constraints_match(problem, text):
+            constraint_mismatch_count += 1
             continue
         if p.source == "github_repo":
             projects.append(_project(p))
@@ -138,13 +144,20 @@ def check(problem: str, lens: str = "software") -> dict:
     papers.sort(key=lambda x: x["score"], reverse=True)
     actions.sort(key=lambda x: x["score"], reverse=True)
     discussion.sort(key=lambda x: x["score"], reverse=True)
-    sources_ok = sum(1 for s in status.values() if s["state"] in ("ok", "partial"))
+    sources_ok = sum(1 for s in status.values() if s.get("state") in ("ok", "partial"))
+    assessment = assess(projects, papers, actions, lens, discussion, len(raw), sources_ok)
+    if not (projects or papers or actions or discussion) and constraint_mismatch_count and assessment["hint"] == "no_clear_solution_found":
+        assessment["hint"] = "inconclusive_constraints_not_matched"
+        assessment["reasons"] = [f"{constraint_mismatch_count} related candidate(s) did not demonstrate all explicit constraints."]
+        assessment["caveat"] += " A candidate was excluded if it did not show the requested offline, hardware/resource or platform constraint; inspect related results and broaden the search before concluding."
     return {
         "problem": problem,
         "lens": lens,
         "searched_as": variants,
+        "required_constraints": missing_constraints(problem, ""),
+        "constraint_candidates_excluded": constraint_mismatch_count,
         "coverage": status,
-        "assessment": assess(projects, papers, actions, lens, discussion, len(raw), sources_ok),
+        "assessment": assessment,
         "existing_projects": projects[:8],
         "products_and_discussion": discussion[:8],
         "papers": papers[:6],

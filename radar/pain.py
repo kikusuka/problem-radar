@@ -177,21 +177,154 @@ def content_words(text: str) -> list[str]:
 
 
 def query_variants(problem: str) -> list[str]:
-    """Shorter keyword queries from a long problem statement (long sentences match almost nothing)."""
-    words, seen = [w for w in content_words(problem) if w not in GENERIC], []
-    for w in words:
-        if w not in seen:
-            seen.append(w)
+    """Short, ordered queries that preserve explicit constraints and platform names.
 
-    def top(n: int) -> str:
-        keep = set(sorted(seen, key=len, reverse=True)[:n])
-        return " ".join(w for w in seen if w in keep)
+    Do not choose only the longest words: that can drop critical terms such as
+    "offline", "low-end" or "Android" from a long problem statement.
+    """
+    raw = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", problem.lower())
+    acronyms = {w.lower() for w in re.findall(r"\b[A-Z][A-Z0-9]{1,}\b", problem)}
+    preserve_patterns = (
+        r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bon[- ]device\b|\bon device\b",
+        r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]cost\b|\blow[- ]spec\b"
+        r"|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b|\baffordable\b|\bprivacy[- ]first\b",
+        r"\bandroid\b|\bios\b|\biphone\b|\bipad\b|\bwindows\b|\blinux\b|\bmacos\b|\bchromeos\b",
+        r"\bopen[- ]source\b|\bno[- ]cost\b|\bfree\b|\bprivate\b|\bprivacy\b|\blocal (?:ai|model|llm|inference|execution|processing)\b|\bruns? locally\b|\bfully local\b",
+    )
+    required = set()
+    for pattern in preserve_patterns:
+        for match in re.finditer(pattern, problem, re.I):
+            required.update(re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", match.group(0).lower()))
 
-    out = [top(4)] if seen else []
-    if len(seen) > 2:
-        out.append(top(2))
-    return out or [problem]
+    words = []
+    for word in raw:
+        if word in words or word in STOP_WORDS:
+            continue
+        if len(word) <= 2 and word not in acronyms and word not in required:
+            continue
+        if word in GENERIC and word not in required:
+            continue
+        words.append(word)
+    if not words:
+        return [problem.strip()]
 
+    # Keep all explicitly stated constraints, then fill with terms in their original
+    # order. This is deterministic, cheap, and does not need an external model.
+    required_ordered = [w for w in words if w in required]
+    primary = list(required_ordered)
+    for word in words:
+        if word not in primary and len(primary) < max(7, len(required_ordered)):
+            primary.append(word)
+    primary = [w for w in words if w in set(primary)]
+    if len(primary) > 10:
+        required_set = set(required_ordered)
+        optional = [w for w in primary if w not in required_set]
+        primary = [w for w in primary if w in required_set] + optional[: max(0, 10 - len(required_set))]
+        primary = [w for w in words if w in set(primary)]
+
+    out = [" ".join(primary)]
+    if len(words) > 2:
+        # A narrower alternative still carries every explicit constraint.
+        extras = sorted(
+            (w for w in words if w not in required),
+            key=lambda w: (-len(w), words.index(w)),
+        )[:2]
+        secondary_set = set(required_ordered + extras)
+        secondary = [w for w in words if w in secondary_set]
+        q = " ".join(secondary)
+        if q and q not in out:
+            out.append(q)
+    return out
+
+
+# Hard constraints are extracted only when the user explicitly states them.
+# The document-side patterns allow common equivalents, rather than requiring the
+# exact same wording. This is intentionally conservative on the small free tier.
+_CONSTRAINT_GROUPS = (
+    (
+        "offline operation",
+        re.compile(r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b", re.I),
+        re.compile(r"\boffline\b|\bwithout (?:an? )?internet\b|\bno[- ]internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bworks? without (?:an? )?internet\b", re.I),
+    ),
+    (
+        "on-device/local execution",
+        re.compile(r"\bon[- ]device\b|\b(?:local (?:ai|model|llm|inference|execution|processing)|runs? locally|fully local)\b", re.I),
+        re.compile(r"\bon[- ]device\b|\bon device\b|\bfully local\b|\blocal (?:ai|model|llm|inference)\b|\bruns? locally\b|\bair[- ]gapped\b", re.I),
+    ),
+    (
+        "low-resource hardware",
+        re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b", re.I),
+        re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b|\bolder (?:phones?|devices?)\b|\bold (?:phones?|devices?)\b|\bsmall (?:phones?|devices?)\b|\bbudget phones?\b|\b[1248] ?gb ram\b|\b2 ?gb memory\b", re.I),
+    ),
+    (
+        "affordability",
+        re.compile(r"\blow[- ]cost\b|\baffordable\b|\bcheap\b|\bbudget[- ]friendly\b|\bno[- ]cost\b|\bfree\b", re.I),
+        re.compile(r"\blow[- ]cost\b|\baffordable\b|\bcheap\b|\bbudget[- ]friendly\b|\bno[- ]cost\b|\bfree\b|\bunder \$\s?\d+\b|\bcosts? (?:less|under)\b|\bfree tier\b|\bfree to use\b", re.I),
+    ),
+    (
+        "Android platform",
+        re.compile(r"\bandroid\b", re.I),
+        re.compile(r"\bandroid\b|\bapk\b|\bgoogle play\b|\bandroid app\b|\bplay store\b", re.I),
+    ),
+    (
+        "iOS platform",
+        re.compile(r"\bios\b|\biphone\b|\bipad\b", re.I),
+        re.compile(r"\bios\b|\biphone\b|\bipad\b|\bapple app store\b|\bipados\b", re.I),
+    ),
+)
+
+_CONSTRAINT_DENIALS = {
+    "offline operation": re.compile(
+        r"\b(?:online[- ]only|cloud[- ]only)\b|"
+        r"\b(?:requires?|needs?)\s+(?:an?\s+)?(?:internet|network|connection)\b|"
+        r"\b(?:not|never|isn't|is not|doesn't run|does not run|cannot run|can't run|won't work|doesn't work)\b.{0,30}\boffline\b",
+        re.I,
+    ),
+    "on-device/local execution": re.compile(
+        r"\b(?:cloud[- ]based only|remote[- ]only|server[- ]only)\b|"
+        r"\b(?:not|isn't|is not|doesn't run|does not run|cannot run|can't run|won't work)\b.{0,35}\b(?:on[- ]device|locally|local(?:\s+(?:ai|model|llm|inference|execution|processing))?)\b",
+        re.I,
+    ),
+    "low-resource hardware": re.compile(
+        r"\b(?:not suitable|not designed|doesn't run|does not run|won't run|cannot run|can't run)\b.{0,40}\b(?:low[- ]end|low[- ]ram|low[- ]memory|entry[- ]level|budget phones?)\b|"
+        r"\b(?:flagship|high[- ]end)\b.{0,20}\b(?:only|required|minimum)\b|"
+        r"\b(?:requires?|needs?)\s+(?:at least\s+)?(?:8|12|16)\s?gb\s+(?:of\s+)?(?:ram|memory)\b",
+        re.I,
+    ),
+    "affordability": re.compile(
+        r"\b(?:not|isn't|is not|never)\s+(?:free|cheap|affordable)\b|"
+        r"\btoo expensive\b|\bnot affordable\b|\bpaid only\b|\bsubscription required\b",
+        re.I,
+    ),
+    "Android platform": re.compile(
+        r"\b(?:not supported|unsupported|not available|unavailable|doesn't run|does not run|not for)\b.{0,25}\bandroid\b|"
+        r"\bandroid\b.{0,15}\b(?:unsupported|not supported)\b",
+        re.I,
+    ),
+    "iOS platform": re.compile(
+        r"\b(?:not supported|unsupported|not available|unavailable|doesn't run|does not run|not for)\b.{0,25}\b(?:ios|iphone|ipad)\b|"
+        r"\b(?:ios|iphone|ipad)\b.{0,15}\b(?:unsupported|not supported)\b",
+        re.I,
+    ),
+}
+
+
+def missing_constraints(query: str, text: str) -> list[str]:
+    """Return explicit user constraints not evidenced by the candidate text."""
+    missing = []
+    candidate = text or ""
+    for label, query_re, text_re in _CONSTRAINT_GROUPS:
+        if not query_re.search(query or ""):
+            continue
+        denial = _CONSTRAINT_DENIALS.get(label)
+        if not text_re.search(candidate) or (denial and denial.search(candidate)):
+            missing.append(label)
+    return missing
+
+
+def constraints_match(query: str, text: str) -> bool:
+    """True when a candidate preserves each hard constraint stated in the query."""
+    return not missing_constraints(query, text)
 
 def _has_word(word: str, text: str, loose: bool = False) -> bool:
     """Match at the start of a word only. Short words (under 5 letters) must match whole words, so 'aid' is not

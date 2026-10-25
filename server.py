@@ -51,8 +51,10 @@ def check_if_solved(problem: str, lens: str = "software") -> dict:
     """Is this problem already solved? Checks existing projects, products, papers and public actions before you commit.
 
     Searches GitHub repositories (software), Show HN and product discussion, recent papers, and UK petitions (policy),
-    then gives a hint (well served, partially solved, no clear solution found) with reasons and a guide to finding the
-    gap the best existing solution leaves open. Absence of results is never proof that nobody solved it.
+    then gives a hint with reasons and a guide to finding the gap the best existing solution leaves open. Absence of results is
+    never proof that nobody solved it. If required_constraints are present, candidates must demonstrate those constraints;
+    constraint_candidates_excluded counts related candidates that did not. "inconclusive_constraints_not_matched" means
+    the search did not demonstrate the requested requirements, not that no solution exists.
     lens: software, hardware, policy, research or any.
     """
     return solved.check(problem, lens)
@@ -88,17 +90,22 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     searches, and uses official data where it exists (UK petitions, US NYC 311 and FDA). Other places have community and
     paper coverage only, and the result says so. You decide; the person can change it any time.
 
-    also: synonyms and related terms (e.g. ["wheelchair", "prosthetic", "hearing aid"] for "assistive devices"). People
-    rarely use your exact words, so pass these whenever you can, especially if few posts come back.
+    also: up to four synonyms/related terms (e.g. ["wheelchair", "prosthetic"] for "assistive devices"). Do not use
+    synonyms that contradict or drop explicit hard requirements from the niche. Both variants preserve known constraints
+    such as offline operation, low-resource hardware, affordability, and platform. Results that do not demonstrate those
+    requirements appear as near_misses with missing_constraints rather than top_posts. Review those fields before asking
+    to broaden a search.
 
     lens picks where and how to search: software (tools, automation), hardware (devices, DIY, products),
     policy (rules, services, civic fixes; includes UK petition signature counts and NYC 311 complaint counts),
     research (recent papers calling something open or understudied), or any (default; the analyst decides the fix type).
     goal tunes the guidance: hackathon, hobby, portfolio, impact, class_project, capstone, research, science_fair.
-    Returns the most relevant complaints with links, recurring themes, rough groupings, and a coverage report saying
-    which sources worked, failed or were skipped. Posts are raw and unverified: group by meaning, discard noise,
-    and follow the analysis_guide. depth: quick (default) or deep. sources: any of hn, se, reddit, github, web, petitions,
-    nyc311, scholar. se_sites: Stack Exchange site names, e.g. ["electronics", "diy"]. Cached 36h; refresh=True re-runs.
+    Returns ranked public-source leads, not verified facts. Inspect the URLs and snippets; use the analysis_guide to
+    separate reports, products, papers and official data. Check coverage before interpreting a thin result set. A missing
+    result is not evidence that the problem does not exist. depth: quick (default) or deep. sources: any of hn, se, reddit,
+    github, petitions, nyc311, scholar. The public free-tier request budget may limit source jobs; check queries_planned,
+    queries_run, queries_succeeded, queries_timed_out, queries_cancelled_before_start and each source's coverage flags. se_sites: Stack Exchange sites.
+    Cached 36h; refresh=True re-runs.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 
@@ -109,7 +116,8 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
     """Search for complaints with your own wording, e.g. 'pedestrian crossing near school' or 'quickbooks invoice export'.
 
     Use it to follow up on a theme from research_niche, probe a specific workflow, or cover a gap when a source failed
-    or the place is outside the built-in civic data. Pass subreddit to focus Reddit.
+    or the place is outside the built-in civic data. Pass subreddit to focus Reddit. Query length is capped; source and
+    Stack Exchange site lists are bounded for public free-tier reliability. Check coverage and treat results as leads.
     """
     return research.search(query, sources, limit, subreddit, se_sites)
 
@@ -119,8 +127,11 @@ def validate_problem(problem: str, niche: str = "", lens: str = "software") -> d
     """Check a candidate problem before building or campaigning: existing solutions, willingness-to-pay signals and workarounds.
 
     Pass a short description. lens software, hardware or policy changes what counts as an existing solution
-    (products, devices, laws, petitions) and adds fix-specific checks. Posts alone never prove demand, so it also
-    tells you what to ask real people.
+    (products, devices, laws, petitions). Read evidence_status and evidence_note first: insufficient_evidence means
+    the search found no qualifying evidence, not that no solution or demand exists; limited_evidence means coverage
+    or evidence volume is thin; evidence_found_needs_validation means public leads were found but do not validate demand.
+    paying_signals are relevant spending/price mentions; willingness_to_pay_signals require explicit positive intent to pay;
+    workaround_signals must refer to the target problem. Follow the validation guide and talk to real users.
     """
     return research.validate(problem, niche, lens)
 
