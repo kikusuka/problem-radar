@@ -62,7 +62,7 @@ def test_general_expansions_keep_platform_and_resource_constraints():
         ),
         (
             "How do I stop this Android LLM from freezing?",
-            "technical_failure_report",
+            "help_request",
         ),
         (
             "Tool A versus Tool B for invoice exports",
@@ -221,3 +221,87 @@ def test_direct_search_rotates_alternate_queries_per_source(monkeypatch):
     second_queries = [qs[1] for qs in calls.values() if len(qs) > 1]
     assert len(set(second_queries)) == 3
     assert len(result["query_variants_scheduled"]) >= 4
+
+
+
+def test_tutorial_title_is_not_mislabeled_as_failure_report():
+    title = (
+        "Everything I learned building on-device AI into a React Native app -- "
+        "LLMs, Stable Diffusion, Whisper, and Vision"
+    )
+    body = (
+        "I spent some time building an app that runs LLMs, image generation, voice "
+        "transcription, and vision AI entirely on-device. Here's what I wish someone "
+        "had told me before I started. I discuss crashes, memory errors, and how to debug them."
+    )
+    profile = signal_quality.signal_profile(title + " " + body)
+    assert profile["evidence_kind"] == "technical_tutorial"
+    assert profile["promotional"] is False
+
+
+def test_tutorial_with_failure_vocabulary_is_not_ranked_as_a_complaint():
+    title = (
+        "Everything I learned building on-device AI into a React Native app -- "
+        "LLMs, Stable Diffusion, Whisper, and Vision"
+    )
+    body = (
+        "I built an app that runs local LLMs. I explain memory errors and crashes I "
+        "encountered while testing, and what I learned debugging those failures."
+    )
+    tutorial = post("reddit", "ondevice-tutorial", title, body, author="author")
+    ranked, misses = research._rank(
+        [tutorial],
+        ["Android local LLM crashes out of memory"],
+        require_pain=True,
+        enforce_constraints=False,
+    )
+    assert ranked == []
+    assert any(item[1].id == "ondevice-tutorial" for item in misses)
+
+
+def test_local_llm_query_rejects_android_memory_bug_without_llm_evidence():
+    query = "Android local LLM crashes out of memory"
+    unrelated = (
+        "Opening large Markdown files in the mobile preview panel causes severe UI lag, "
+        "freezing, and white-screen crashes on iOS and Android devices."
+    )
+    unrelated_model = (
+        "Model packaging and resource constraints cause Android app crashes and memory errors, "
+        "but this report does not mention LLMs, language models, local inference, or model runtimes."
+    )
+    real_topic = (
+        "The Android app running a local LLM crashes with an out-of-memory error after longer prompts."
+    )
+    assert not pain.topic_fit(query, unrelated)
+    assert not pain.topic_fit(query, unrelated_model)
+    assert pain.topic_fit(query, real_topic)
+
+
+def test_topical_core_anchor_keeps_relevant_complaint_and_rejects_adjacent_bug():
+    query = "Android local LLM crashes out of memory"
+    unrelated = post(
+        "github",
+        "android-markdown-preview",
+        "Large Markdown preview freezes on Android",
+        "Opening large Markdown files on Android causes UI lag, freezing and white-screen crashes.",
+        author="reporter",
+    )
+    complaint = post(
+        "reddit",
+        "android-local-llm-oom",
+        "Android local LLM keeps crashing with out-of-memory errors",
+        "My Android local LLM keeps crashing after longer prompts. It freezes with an out-of-memory error.",
+        author="reporter2",
+    )
+    ranked, _ = research._rank(
+        [unrelated, complaint],
+        [query],
+        require_pain=True,
+        enforce_constraints=False,
+    )
+    assert [item[1].id for item in ranked] == ["android-local-llm-oom"]
+
+
+def test_strong_failure_report_cues_still_classify_firsthand_memory_bug():
+    text = "Tasker keeps crashing due to low memory and fails to allocate a small buffer."
+    assert signal_quality.signal_profile(text)["evidence_kind"] == "technical_failure_report"
