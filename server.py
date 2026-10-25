@@ -50,9 +50,9 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
 def check_if_solved(problem: str, lens: str = "software") -> dict:
     """Is this problem already solved? Checks existing projects, products, papers and public actions before you commit.
 
-    Searches GitHub repositories (software), Show HN and product discussion, recent papers, and UK petitions (policy),
-    then gives a hint with reasons and a guide to finding the gap the best existing solution leaves open. Absence of results is
-    never proof that nobody solved it. If required_constraints are present, candidates must demonstrate those constraints;
+    Searches GitHub repositories, Show HN and product discussion, and recent papers; policy checks also use UK petitions.
+    The research lens adds arXiv preprints. It gives a hint with reasons and a guide to finding the gap the best existing
+    solution leaves open. Absence of results is never proof that nobody solved it. If required_constraints are present, candidates must demonstrate those constraints;
     constraint_candidates_excluded counts related candidates that did not. "inconclusive_constraints_not_matched" means
     the search did not demonstrate the requested requirements, not that no solution exists.
     lens: software, hardware, policy, research or any.
@@ -102,11 +102,14 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     goal tunes the guidance: hackathon, hobby, portfolio, impact, class_project, capstone, research, science_fair.
     Returns ranked public-source leads, not verified facts. Inspect the URLs and snippets; use the analysis_guide to
     separate reports, products, papers and official data. Check coverage before interpreting a thin result set. A missing
-    result is not evidence that the problem does not exist. depth: quick (default) or deep. sources: any of hn, se, reddit,
-    github, petitions, nyc311, scholar. The public free-tier request budget may limit source jobs; check queries_planned,
-    queries_budgeted, queries_run, queries_succeeded, queries_timed_out, queries_cancelled_before_start and each source's coverage flags.
-    Default research reserves part of the same 16-job cap for a fallback pass when initial evidence is thin. se_sites: Stack Exchange sites.
-    Cached 36h; refresh=True re-runs.
+    result is not evidence that the problem does not exist. depth: quick (default) or deep. Sources include Hacker News,
+    Stack Exchange, Reddit, Bluesky public posts, optional GitLab public issues (requires GITLAB_TOKEN), GitHub issues
+    for developer niches, OpenAlex and Europe PMC papers, arXiv preprints for research, and applicable official civic data.
+    There is no automatic general web-search fallback or paid-provider substitution. The public request budget admits at most
+    16 source jobs and at most two outbound request units per upstream provider; authentication handshakes count where relevant.
+    Check queries_planned, queries_budgeted, provider_request_units_budgeted, queries_run, queries_succeeded,
+    queries_timed_out, queries_cancelled_before_start, and each source's coverage flags. Some planned jobs are deliberately
+    omitted to respect those caps. se_sites: Stack Exchange sites. Cached 36h; refresh=True re-runs.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 
@@ -116,9 +119,9 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
                 se_sites: list[str] | None = None) -> dict:
     """Search for complaints with your own wording, e.g. 'pedestrian crossing near school' or 'quickbooks invoice export'.
 
-    Use it to follow up on a theme from research_niche, probe a specific workflow, or cover a gap when a source failed
-    or the place is outside the built-in civic data. Pass subreddit to focus Reddit. Query length is capped; source and
-    Stack Exchange site lists are bounded for public free-tier reliability. Check coverage and treat results as leads.
+    Use it to follow up on a theme from research_niche or probe a specific workflow. Pass subreddit to focus Reddit.
+    Built-in sources only: there is no automatic general web-search fallback. Query length is capped and source/site
+    lists are bounded; per-provider request limits may omit planned work. Check coverage and treat results as leads.
     """
     return research.search(query, sources, limit, subreddit, se_sites)
 
