@@ -470,7 +470,7 @@ def _candidate_has_topic_group(group: str, candidate: str) -> bool:
         return _has_word(group[5:], candidate, loose=True)
     aliases = _TOPIC_ALIAS_GROUPS.get(group, set())
     return any(
-        re.search(r"\\b" + r"\\s+".join(re.escape(part) for part in alias.lower().split()) + r"\\b", candidate, re.I)
+        re.search(r"\b" + r"\s+".join(re.escape(part) for part in alias.lower().split()) + r"\b", candidate, re.I)
         for alias in aliases
     )
 
