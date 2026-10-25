@@ -40,6 +40,7 @@ SOURCE_PROVIDER_GROUP = {
     "github_repo": "github",
 }
 SOURCE_REQUEST_COST = {"reddit_community": 2}  # one subreddit lookup plus one community search
+SOURCE_JOB_LIMIT = {"arxiv": 1}  # strict global rate policy makes a second same-call query wasteful
 
 MAX_QUERY_LIST_ITEMS = 12
 MAX_QUERY_LIST_ITEM_CHARS = 100
@@ -164,6 +165,7 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
 
     selected: list[Job] = []
     requests_by_provider: dict[str, int] = {}
+    jobs_by_provider: dict[str, int] = {}
     while len(selected) < limit:
         progressed = False
         for source in order:
@@ -176,8 +178,11 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
             used = requests_by_provider.get(provider, 0)
             if used + cost > MAX_REQUESTS_PER_PROVIDER_PER_CALL:
                 continue
+            if jobs_by_provider.get(provider, 0) >= SOURCE_JOB_LIMIT.get(provider, MAX_REQUESTS_PER_PROVIDER_PER_CALL):
+                continue
             selected.append(pending.pop(0))
             requests_by_provider[provider] = used + cost
+            jobs_by_provider[provider] = jobs_by_provider.get(provider, 0) + 1
             progressed = True
         if not progressed:
             break
