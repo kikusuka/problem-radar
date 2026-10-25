@@ -672,19 +672,22 @@ def test_student_hunt_keeps_a_specific_project_interest():
 
 def test_timed_out_source_job_keeps_its_global_capacity_slot(monkeypatch):
     import threading
-    from concurrent.futures import wait
     from threading import BoundedSemaphore
 
     started = threading.Event()
     release = threading.Event()
+    finished = threading.Event()
     slots = BoundedSemaphore(1)
     monkeypatch.setattr(research, "_SOURCE_SLOTS", slots)
     monkeypatch.setattr(research, "DEADLINE", 0.01)
 
     def blocked_source(query, limit=20, **kwargs):
         started.set()
-        release.wait(timeout=2)
-        return S.Result([])
+        try:
+            release.wait(timeout=2)
+            return S.Result([])
+        finally:
+            finished.set()
 
     monkeypatch.setitem(S.SOURCES, "hn", blocked_source)
     try:
@@ -697,13 +700,17 @@ def test_timed_out_source_job_keeps_its_global_capacity_slot(monkeypatch):
         assert second["hn"]["state"] == "skipped"
     finally:
         release.set()
-        # Ensure the worker finishes before the test restores the shared slot semaphore.
+        # Ensure the worker and its done callback finish before restoring the semaphore.
+        assert finished.wait(timeout=1)
         deadline = time.monotonic() + 1
-        while slots.acquire(blocking=False):
-            slots.release()
-            if time.monotonic() >= deadline:
+        acquired = False
+        while time.monotonic() < deadline:
+            if slots.acquire(blocking=False):
+                slots.release()
+                acquired = True
                 break
             time.sleep(0.01)
+        assert acquired
 
 def test_personal_json_tools_refuse_network_transport():
     env = os.environ.copy()
