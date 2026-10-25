@@ -564,7 +564,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
             for _, p, _, _ in misses[:8]
         ]
         payload["near_misses_note"] = ("These candidates did not qualify as top results. Check missing_constraints first: some lack a hard requirement, "
-                                       "while others may use different words for the same problem. Only add synonyms that preserve the required constraints.")
+                                       "while others may use different words for the same problem. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
     if fallback_note:
         payload["fallback_note"] = fallback_note
