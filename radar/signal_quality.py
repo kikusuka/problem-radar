@@ -120,12 +120,12 @@ _COMPILED = {
 # Borrowed concept: require both maker language and a call to action before
 # marking a result promotional. A maker post can still contain real evidence.
 _PROMO_TRIGGER = re.compile(
-    r"\b(?:i|we)\\s+(?:built|made|created|designed|developed|founded|launched)\\b",
+    r"\b(?:i|we)\s+(?:built|made|created|designed|developed|founded|launched)\b",
     re.IGNORECASE,
 )
 _PROMO_CTA = re.compile(
     r"\b(?:check it out|happy to share|beta|launching|sign up|try it(?: out)?|"
-    r"give it a try|feedback welcome|open beta|available now|join the waitlist)\\b",
+    r"give it a try|feedback welcome|open beta|available now|join the waitlist)\b",
     re.IGNORECASE,
 )
 
