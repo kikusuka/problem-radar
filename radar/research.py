@@ -121,6 +121,15 @@ def _result_cache_ttl(payload: dict) -> int:
         if any(row.get("ok", 0) for row in coverage.values()):
             return _EMPTY_SUCCESS_TTL
         return _FAILED_REQUEST_TTL
+    if "results" in payload:
+        if payload.get("results"):
+            return 60 * 60
+        if payload.get("near_misses"):
+            return _EMPTY_EVIDENCE_TTL
+        coverage = payload.get("coverage", {})
+        if any(row.get("ok", 0) for row in coverage.values()):
+            return _EMPTY_SUCCESS_TTL
+        return _FAILED_REQUEST_TTL
     if "evidence_status" in payload:
         if payload.get("evidence_status") == "evidence_found_needs_validation":
             return 6 * 3600
@@ -996,7 +1005,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     return result
 
 
-def search(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
+def _search_compute(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
            se_sites: list[str] | None = None) -> dict:
     """Search complaints with bounded equivalent wording while retaining a single budgeted fan-out."""
     if not isinstance(query, str) or not query.strip():
@@ -1069,6 +1078,25 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
     }
 
 
+def search(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
+           se_sites: list[str] | None = None) -> dict:
+    """Cache complaint searches briefly and collapse concurrent duplicate calls."""
+    normalized_limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 20, 30))
+    key_material = {
+        "query": query,
+        "sources": sources,
+        "subreddit": subreddit,
+        "se_sites": se_sites,
+    }
+    result = cached_result(
+        "search-pain",
+        key_material,
+        lambda: _search_compute(query, sources, 30, subreddit, se_sites),
+    )
+    result["results"] = result.get("results", [])[:normalized_limit]
+    return result
+
+
 SOLUTION_WORDS = {
     "software": r"alternative|alternatives|saas|plugin|extension|startup|launched|i built|we built|show hn|open[- ]source|app that|tool called",
     "hardware": r"alternative|alternatives|product|device|gadget|kit|on amazon|kickstarter|i built|we built|open[- ]source hardware|sells",
@@ -1104,7 +1132,7 @@ VALIDATION_EXTRA = {
 }
 
 
-def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
+def _validate_compute(problem: str, niche: str = "", lens: str = "software") -> dict:
     if not isinstance(problem, str) or not problem.strip():
         raise ValueError("problem must be a non-empty string")
     problem = problem.strip()
@@ -1281,6 +1309,17 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
         **buckets,
         "validation_guide": VALIDATION_GUIDE + VALIDATION_EXTRA.get(lens, ""),
     }
+
+
+def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
+    """Cache validation runs so repeated checks don't burn the shared free quotas."""
+    normalized_lens = lens if lens in SOLUTION_WORDS else "software"
+    key_material = {"problem": problem, "niche": niche, "lens": normalized_lens}
+    return cached_result(
+        "validate-problem",
+        key_material,
+        lambda: _validate_compute(problem, niche, normalized_lens),
+    )
 
 
 # ---------------------------------------------------------------- disk cache
