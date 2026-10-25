@@ -898,6 +898,17 @@ def _research_compute(niche: str, depth: str = "quick", limit: int = 25, sources
     supporting_urls = {item["url"] for item in supporting_evidence}
     ranked = _diversify(ranked, limit)
     provider_request_counts = getattr(status, "provider_request_counts", {})
+    search_diagnostics = _search_diagnostics(
+        len(kept), len(misses), status,
+        list(dict.fromkeys(j.query for j in budgeted_jobs)),
+    )
+    if not kept and supporting_evidence:
+        search_diagnostics["status"] = "related_constraint_limited"
+        search_diagnostics["supporting_evidence_count"] = len(supporting_evidence)
+        search_diagnostics["interpretation"] = (
+            "Related pain evidence was found, but none of it demonstrates every explicit requirement. "
+            "The supporting_evidence tier identifies which requirement is missing; this is not proof the fully constrained problem is absent."
+        )
     payload = {
         "niche": niche,
         "lens": lens,
@@ -927,10 +938,7 @@ def _research_compute(niche: str, depth: str = "quick", limit: int = 25, sources
         "recurring_themes": themes(kept, niche),
         "suggested_groups": suggested_groups(kept, niche),
         "evidence_summary": _evidence_summary(kept),
-        "search_diagnostics": _search_diagnostics(
-            len(kept), len(misses), status,
-            list(dict.fromkeys(j.query for j in budgeted_jobs)),
-        ),
+        "search_diagnostics": search_diagnostics,
         "analysis_guide": build_guide(lens, goal),
         "from_cache": False,
     }
@@ -1035,6 +1043,12 @@ def _search_compute(query: str, sources: list[str] | None = None, limit: int = 2
     scheduled_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
     scheduled_variants = list(dict.fromkeys(job.query for job in scheduled_jobs))
     raw, status = run_jobs(jobs)
+    provider_request_counts = getattr(status, "provider_request_counts", {})
+    budgeted_providers = {SOURCE_PROVIDER_GROUP.get(j.source, j.source) for j in scheduled_jobs}
+    provider_request_units_budgeted = (
+        sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in scheduled_jobs)
+        + sum(S.startup_request_cost(provider) for provider in budgeted_providers)
+    )
     ranked, misses = _rank(raw, [query], require_pain=True, enforce_constraints=False)
     selected = ranked[: max(5, min(limit, 60))]
     results = []
@@ -1064,6 +1078,12 @@ def _search_compute(query: str, sources: list[str] | None = None, limit: int = 2
     return {
         "query": query,
         "coverage": status,
+        "queries_planned": len(jobs),
+        "queries_budgeted": len(scheduled_jobs),
+        "provider_request_units_budgeted": provider_request_units_budgeted,
+        "provider_request_units_used": sum(provider_request_counts.values()),
+        "provider_request_counts": provider_request_counts,
+        "provider_request_denials": getattr(status, "provider_request_denials", {}),
         "posts_fetched": len(raw),
         "results": results,
         "near_misses": near_misses,
