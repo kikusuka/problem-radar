@@ -640,3 +640,11 @@ def test_unrelated_post_from_topic_community_is_rejected():
              "The game crashes and is frustrating to play.", "player", community="tight")
     ranked, _ = research._rank([post], ["offline AI assistant for low-end Android phones"])
     assert not ranked
+
+
+def test_unrelated_purchase_is_not_a_paying_signal(monkeypatch):
+    post = P("hn", 998, "Quickbooks invoices reconciliation is frustrating",
+             "I am tired of this. Separately, I paid $500 for a new laptop.", "writer")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([post], {}))
+    out = research.validate("quickbooks invoices reconciliation", "accounting")
+    assert out["counts"]["paying_signals"] == 0
