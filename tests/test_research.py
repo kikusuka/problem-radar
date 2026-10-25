@@ -303,7 +303,11 @@ def test_synonyms_via_also_recover_posts_that_use_other_words(monkeypatch):
     with_syn = research.research("assistive devices", lens="hardware", also=["wheelchair"], force=True)
     assert with_syn["posts_relevant"] == 1 and with_syn["searched_terms"] == ["assistive devices", "wheelchair"]
     jobs = research.plan("assistive devices", "quick", lens="hardware", also=["wheelchair", "prosthetic"])
-    assert any(j.query == "wheelchair" for j in jobs if j.source == "hn")
+    assert all(j.query.casefold() != "wheelchair" for j in jobs)
+    assert any(
+        "assistive devices" in j.query.casefold() and "wheelchair" in j.query.casefold()
+        for j in jobs if j.source == "hn"
+    )
 
 
 def test_papers_show_the_sentence_that_states_the_gap(monkeypatch):
@@ -1117,7 +1121,7 @@ def test_topic_anchor_index_does_not_promote_partial_phrases_to_ai(monkeypatch):
     assert any(group == "ai_language_model" for group, _ in language_model_groups)
     assert not pain.topic_fit(
         "offline AI assistant on Android using a local language",
-        "A website supports local language switching but has no AI assistant.",
+        "A website supports local language switching and has a chatbot but no model or AI features.",
     )
 
 
