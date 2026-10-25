@@ -433,11 +433,15 @@ _TOPIC_ALIAS_GROUPS = {
     "invoice": {"invoice", "invoices", "invoicing", "billing", "accounts receivable"},
     "reconciliation": {"reconciliation", "reconcile", "reconciling", "matching", "bookkeeping", "accounting"},
 }
-_TOPIC_ALIAS_INDEX = {
-    alias: group
-    for group, aliases in _TOPIC_ALIAS_GROUPS.items()
-    for alias in aliases
-}
+_TOPIC_ALIAS_INDEX = {}
+for _group, _aliases in _TOPIC_ALIAS_GROUPS.items():
+    for _alias in _aliases:
+        _TOPIC_ALIAS_INDEX[_alias] = _group
+        # Query wording often gives only one word of a known phrase ("language model").
+        # Map non-generic component words to the same anchor group as the full alias.
+        if " " in _alias:
+            for _part in _alias.split():
+                _TOPIC_ALIAS_INDEX.setdefault(_part, _group)
 
 
 def _topic_groups(query: str) -> list[tuple[str, str]]:
