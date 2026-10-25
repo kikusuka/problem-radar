@@ -44,7 +44,7 @@ def test_coverage_reports_every_source_state():
     out = research.research("accounting invoices", force=True)
     cov = out["coverage"]
     assert cov["hn"]["state"] == "ok"
-    assert cov["se"]["state"] == "ok"
+    assert cov["se"]["state"] == "partial"  # the public per-request budget intentionally limits excess source jobs
     assert cov["reddit"]["state"] == "failed" and "403" in cov["reddit"]["errors"][0]
     assert "web" not in cov  # no paid or limited web search; the chatting LLM uses its own
 
@@ -766,9 +766,9 @@ def test_validation_separates_existing_spend_from_explicit_willingness_to_pay(mo
           "I would pay $5 a month for an offline AI assistant on a low-end Android phone.", "a")
     monkeypatch.setattr(research, "run_jobs", lambda jobs: ([p], {"hn": {"state": "ok", "posts": 1}, "reddit": {"state": "ok", "posts": 0}}))
     out = research.validate("offline AI assistant for low-end Android phones", "offline Android AI")
-    assert out["counts"]["paying_signals"] == 1
+    assert out["counts"]["paying_signals"] == 0
     assert out["counts"]["willingness_to_pay_signals"] == 1
-    assert out["required_constraints"] == ["offline/local operation", "low-resource hardware", "Android platform"]
+    assert out["required_constraints"] == ["offline operation", "low-resource hardware", "Android platform"]
 
 
 def test_public_request_job_budget_is_bounded_and_source_diverse(monkeypatch):
