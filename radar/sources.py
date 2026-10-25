@@ -590,7 +590,7 @@ def enabled() -> dict:
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
-        "bluesky": {"enabled": True, "note": "public post search; no API key; request budget capped per provider"},
+        "bluesky": {"enabled": False, "note": "temporarily excluded from default searches after live HTTP 403 responses; re-test the public endpoint before re-enabling"},
         "arxiv": {"enabled": True, "note": "scholarly preprint search; no API key; enforces at least 3 seconds between requests"},
         "gitlab": {"enabled": bool(os.environ.get("GITLAB_TOKEN", "").strip()), "note": ("authenticated public issue search; token configured" if os.environ.get("GITLAB_TOKEN", "").strip() else "optional; set GITLAB_TOKEN with read_api scope to search public issues; no keyless global search")},
         "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
