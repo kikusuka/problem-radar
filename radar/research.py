@@ -145,6 +145,7 @@ class Job:
     query: str
     opts: dict = field(default_factory=dict)
     limit: int = 20
+    purpose: str = ""
 
 
 def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]:
@@ -284,9 +285,29 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     return jobs
 
 
+class _SourceStatus(dict):
+    """Dictionary-compatible per-source coverage with live access to the HTTP budget."""
+
+    def __init__(self, rows: dict, request_budget: S.ProviderRequestBudget):
+        super().__init__(rows)
+        self._request_budget = request_budget
+
+    @property
+    def provider_request_counts(self) -> dict:
+        return self._request_budget.snapshot()
+
+    @property
+    def provider_request_denials(self) -> dict:
+        return self._request_budget.denials()
+
+
 def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post], dict]:
-    status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "cancelled_before_start": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
-                         "capacity_limited": False, "request_limited": False} for j in jobs}
+    request_budget = S.ProviderRequestBudget(MAX_REQUESTS_PER_PROVIDER_PER_CALL)
+    status = _SourceStatus(
+        {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "cancelled_before_start": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
+                    "capacity_limited": False, "request_limited": False} for j in jobs},
+        request_budget,
+    )
     for j in jobs:
         status[j.source]["jobs"] += 1
     posts: list[S.Post] = []
@@ -306,7 +327,9 @@ def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post]
             st["errors"].append("global source-job capacity reached")
             continue
         try:
-            future = _SOURCE_EXECUTOR.submit(S.SOURCES[j.source], j.query, j.limit, **j.opts)
+            future = _SOURCE_EXECUTOR.submit(
+                S.invoke_with_budget, S.SOURCES[j.source], request_budget, j.query, j.limit, **j.opts
+            )
         except Exception as e:
             _SOURCE_SLOTS.release()
             st["errors"].append(type(e).__name__)
@@ -337,6 +360,8 @@ def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post]
                 posts += res.posts
             else:
                 st["errors"].append(res.error)
+                if "request budget exhausted" in res.error or "request limit reached" in res.error:
+                    st["skipped"] = True
     except FutureTimeout:
         pass
     for f, j in futs.items():
@@ -751,6 +776,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
     ranked = _diversify(ranked, limit)
+    provider_request_counts = getattr(status, "provider_request_counts", {})
     payload = {
         "niche": niche,
         "lens": lens,
@@ -760,6 +786,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "queries_planned": len(jobs),
         "queries_budgeted": len(budgeted_jobs),
         "provider_request_units_budgeted": budgeted_provider_requests,
+        "provider_request_units_used": sum(provider_request_counts.values()),
+        "provider_request_counts": provider_request_counts,
+        "provider_request_denials": getattr(status, "provider_request_denials", {}),
         "queries_run": sum(st["completed"] for st in status.values()),
         "queries_succeeded": sum(st["ok"] for st in status.values()),
         "queries_timed_out": sum(st["timed_out"] for st in status.values()),
