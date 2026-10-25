@@ -76,7 +76,11 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
     if won:
         reasons.append(f"{len(won)} public petition(s) with 10,000+ signatures, so it is already on the public agenda")
 
-    found_any = bool(projects or papers or actions or discussion)
+    # A paper or petition can be relevant context without demonstrating that a usable
+    # solution exists. Only implementation/project evidence or concrete product
+    # discussion can support the "partially solved" hint outside the research lens.
+    solution_evidence = bool(projects or discussion)
+    related_context = bool(papers or actions)
     caveat = ("Absence here is not proof nobody has solved it: these sources skew English and online, and your wording may "
               "differ from theirs. Try other wording with search_pain, other languages and regions, and ask people.")
     if lens == "hardware":
@@ -84,19 +88,22 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
 
     if strong or (lens == "research" and len(cited) >= 3):
         hint = "well_served_for_the_general_case"
-    elif found_any:
+    elif solution_evidence:
         hint = "partially_solved"
         if not reasons:
-            reasons.append("some related projects, papers or discussion exist, but none is clearly strong")
+            reasons.append("some related implementation or product discussion exists, but its strength and fit remain uncertain")
     elif lens == "hardware":
         hint = "inconclusive_products_not_covered"
-        reasons.append("nothing found, but physical products are not visible to these sources")
+        reasons.append("nothing found that demonstrates a matching solution, but physical products are not fully covered by these sources")
     elif raw_count < 15 or sources_ok < 2:
         hint = "inconclusive_search_too_thin"
         reasons.append(f"only {raw_count} raw results from {sources_ok} working source(s); too little to conclude anything")
     else:
         hint = "no_clear_solution_found"
-        reasons.append("searched several sources with short keyword variants and found no clearly relevant solution")
+        if related_context:
+            reasons.append("Related research papers or public actions were found, but they do not by themselves demonstrate a working solution matching the requested constraints.")
+        else:
+            reasons.append("searched several sources with short keyword variants and found no clearly relevant solution")
     return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "caveat": caveat}
 
 
