@@ -508,6 +508,70 @@ def test_multiword_topics_must_appear_close_together():
     assert relevance("elder care", "Care is hard. " + "word " * 30 + "my elder brother") < 1.0
 
 
+def test_tavily_requires_key_and_maps_search_results(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
+    calls = {}
+
+    class TavilyResponse:
+        status_code = 200
+
+        def json(self):
+            return {"results": [{
+                "title": "Elder care service problems",
+                "url": "https://example.org/care",
+                "content": "Families struggle to find affordable elder care.",
+                "published_date": "2026-09-12",
+                "score": 0.91,
+            }]}
+
+    def fake_post(url, **kwargs):
+        calls["url"] = url
+        calls.update(kwargs)
+        return TavilyResponse()
+
+    monkeypatch.setattr(S.httpx, "post", fake_post)
+    res = S.tavily("elder care", 50)
+
+    assert res.ok and len(res.posts) == 1
+    assert res.posts[0].source == "tavily"
+    assert res.posts[0].url == "https://example.org/care"
+    assert res.posts[0].meta["site"] == "example.org"
+    assert calls["url"] == "https://api.tavily.com/search"
+    assert calls["json"]["api_key"] == "unit-test-key"
+    assert calls["json"]["search_depth"] == "basic"
+    assert calls["json"]["max_results"] == 10
+    assert calls["json"]["include_answer"] is False
+
+
+def test_tavily_skips_without_key_and_reports_exhausted_quota(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: pytest.fail("must not call without a key"))
+    assert S.tavily("elder care").skipped
+
+    monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
+
+    class LimitedResponse:
+        status_code = 429
+
+    monkeypatch.setattr(S.httpx, "post", lambda *a, **k: LimitedResponse())
+    res = S.tavily("elder care")
+    assert not res.ok and "credits exhausted" in res.error
+
+
+def test_tavily_is_preferred_when_configured(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", "unit-test-key")
+    monkeypatch.delenv("ENABLE_DDG_FALLBACK", raising=False)
+    web = S.Post("tavily", "tavily-1", "Elder care problems for families",
+                 "Families struggle with elder care costs", "https://example.org/1",
+                 "", 0, 0, "", {"site": "example.org"})
+    monkeypatch.setitem(S.SOURCES, "tavily", lambda q, limit=20, **k: S.Result([web]))
+    out = research.research("elder care", force=True)
+    assert out["fallback_note"]
+    assert any(p["source"].startswith("tavily") for p in out["top_posts"])
+    assert out["coverage"]["tavily"]["state"] == "ok"
+    assert "ddg" not in out["coverage"]
+
+
 SAMPLE_DDG = (
     '<div class="result"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fcare%3Fa%3D1&amp;rut=abc">Elder care in <b>India</b> is broken</a>'
     '<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">Families struggle to find <b>elder care</b> services.</a></div>'
@@ -521,6 +585,7 @@ class _Resp:
 
 def test_ddg_parses_results_and_unwraps_links(monkeypatch):
     monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
+    monkeypatch.setenv("ENABLE_DDG_FALLBACK", "1")
     monkeypatch.delenv("DISABLE_DDG", raising=False)
     monkeypatch.setattr(S.httpx, "post", lambda *a, **k: _Resp())
     res = S.ddg("elder care india", 5)
@@ -530,6 +595,7 @@ def test_ddg_parses_results_and_unwraps_links(monkeypatch):
 
 def test_ddg_backs_off_when_blocked_and_can_be_disabled(monkeypatch):
     monkeypatch.setitem(S._ddg_cooldown, "until", 0.0)
+    monkeypatch.setenv("ENABLE_DDG_FALLBACK", "1")
     monkeypatch.delenv("DISABLE_DDG", raising=False)
     calls = []
     monkeypatch.setattr(S.httpx, "post", lambda *a, **k: (calls.append(1), _Resp(202, ""))[1])
@@ -541,6 +607,7 @@ def test_ddg_backs_off_when_blocked_and_can_be_disabled(monkeypatch):
 
 
 def test_ddg_is_used_only_when_results_are_thin(monkeypatch):
+    monkeypatch.setenv("ENABLE_DDG_FALLBACK", "1")
     web = S.Post("ddg", "ddg-1", "Elder care problems for families", "Families struggle with elder care costs", "https://example.org/1", "", 0, 0, "", {"site": "example.org"})
     monkeypatch.setitem(S.SOURCES, "ddg", lambda q, limit=20, **k: S.Result([web]))
     thin = research.research("elder care", force=True)
