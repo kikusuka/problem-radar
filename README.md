@@ -53,6 +53,8 @@ four related terms of at most 200 characters each; source and Stack Exchange sit
 deduplicated. One tool call can schedule at most 16 source jobs. Each upstream provider is limited to at most
 two outbound request units per public MCP tool call; Reddit's community adapter uses both units for one
 community-discovery query and one complaint query, while GitHub issue and repository searches share a budget.
+When Reddit OAuth must obtain a new access token, that token request also consumes one unit, so the first
+call uses a single Reddit data search rather than exceeding the two-request cap.
 arXiv requests are spaced by at least three seconds process-wide. There are no automatic web-search fallbacks,
 quota-exhaustion retries, or paid-provider substitutions. Across concurrent calls, the shared executor has
 8 workers and a 32-job in-flight cap. Queued work that misses the request deadline is cancelled where possible;
