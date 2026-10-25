@@ -211,7 +211,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
 
 
 def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
-    status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
+    status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "cancelled_before_start": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
                          "capacity_limited": False, "request_limited": False} for j in jobs}
     for j in jobs:
         status[j.source]["jobs"] += 1
@@ -266,9 +266,13 @@ def run_jobs(jobs: list[Job]) -> tuple[list[S.Post], dict]:
         pass
     for f, j in futs.items():
         if f not in done:
-            f.cancel()  # queued tasks can be cancelled; running threads retain their slot
-            status[j.source]["timed_out"] += 1
-            status[j.source]["errors"].append("timed out")
+            cancelled = f.cancel()  # queued tasks cancel; running threads retain their slot
+            if cancelled:
+                status[j.source]["cancelled_before_start"] += 1
+                status[j.source]["errors"].append("cancelled after request deadline before start")
+            else:
+                status[j.source]["timed_out"] += 1
+                status[j.source]["errors"].append("timed out")
     for source, st in status.items():
         st["errors"] = sorted(set(st["errors"]))[:3]
         if (st["skipped"] and not st["ok"]) or ((st["capacity_limited"] or st["request_limited"]) and not submitted_by_source[source]):
@@ -576,6 +580,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "queries_run": sum(st["completed"] for st in status.values()),
         "queries_succeeded": sum(st["ok"] for st in status.values()),
         "queries_timed_out": sum(st["timed_out"] for st in status.values()),
+        "queries_cancelled_before_start": sum(st["cancelled_before_start"] for st in status.values()),
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
         "searched_terms": [niche] + also,
