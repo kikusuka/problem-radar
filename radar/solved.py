@@ -138,13 +138,19 @@ def _solution_search_queries(problem: str, lens: str) -> list[str]:
         add(f"{platform} local LLM" if platform else "local LLM")
     if has_assistant:
         add(f"{platform} AI chatbot" if platform else "AI chatbot")
-    if core:
-        add(core)
-    # Keep one constraint-rich query as a final candidate for source coverage/reporting.
+
+    # Use three high-yield subject queries plus one constraint-rich query. Previously
+    # appending the strict query and returning candidates[:4] could silently discard it
+    # whenever all three templates and the core query were present.
+    broad = candidates[:3]
     strict = query_variants(problem)
     for query in strict:
-        add(query)
-    return candidates[:4]
+        if query and query.casefold() not in {item.casefold() for item in broad}:
+            broad.append(query)
+            break
+    if len(broad) < 4 and core and core.casefold() not in {item.casefold() for item in broad}:
+        broad.append(core)
+    return broad[:4]
 
 
 def check(problem: str, lens: str = "software") -> dict:
