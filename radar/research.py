@@ -505,7 +505,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     lens = lens if lens in LENSES else "any"
     goal = goal if goal in GOALS else "general"
     limit = max(5, min(limit, 60))
-    also = [t.strip() for t in (also or []) if t and t.strip()][:4]
+    also = [t.strip() for t in (also or []) if isinstance(t, str) and t.strip()][:4]
+    if any(len(term) > 200 for term in also):
+        raise ValueError("each related term must be at most 200 characters")
     cacheable = sources is None and se_sites is None and not also
     fingerprint = hashlib.sha256(niche.casefold().encode("utf-8")).hexdigest()[:16]
     key = f"{slug(niche)}-{fingerprint}-{depth}-{lens}" + (f"-{slug(reg['code'] or reg['name'])}" if reg else "")
@@ -541,7 +543,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "goal": goal,
         "depth": depth,
         "generated_at": int(time.time()),
-        "queries_run": len(jobs),
+        "queries_planned": len(jobs),
+        "queries_run": sum(st["ok"] for st in status.values()),
         "posts_fetched": len(raw),
         "posts_relevant": len(kept),
         "searched_terms": [niche] + also,
@@ -626,11 +629,12 @@ PAYMENT_NEGATION = re.compile(
     re.I,
 )
 VALIDATION_GUIDE = (
-    "Judge three things from the buckets. Saturation: many existing_solutions with strong reviews means the gap is thin; "
-    "look for what they get wrong. Willingness to pay: paying_signals show people spending money or time. "
-    "Workarounds: workaround_signals show a gap people patch by hand. "
-    "Say plainly if evidence is thin, and do not call a problem validated from posts alone. "
-    "End with 3 interview questions and the single result that would make you drop the idea."
+    "Judge each bucket separately. existing_solutions are leads to inspect, not proof the market is saturated. "
+    "paying_signals are relevant transactions or prices mentioned in relation to the problem; "
+    "willingness_to_pay_signals require explicit positive intent to pay. Those are different signals. "
+    "workaround_signals must describe a workaround for this problem, not an unrelated spreadsheet or script. "
+    "Public posts are anecdotes, not a representative survey. State when evidence or source coverage is thin, "
+    "and do not call a problem validated from posts alone. End with 3 interview questions and one result that would make you drop the idea."
 )
 VALIDATION_EXTRA = {
     "hardware": " For hardware also check: parts and build cost, safety or certification issues, and whether a cheap existing product already does 80%.",
@@ -693,8 +697,8 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
         # keyword somewhere in an otherwise unrelated document.
         if rel < 0.3 or not constraints_match(problem, text):
             continue
-        sentences = re.split(r"(?<=[.!?])\s+", text)
-        relevant_sentences = [sentence for sentence in sentences if sentence_is_about_problem(sentence)]
+        sentences = ([clean(p.title)] if p.title else []) + re.split(r"(?<=[.!?])\s+", clean(p.text or ""))
+        relevant_sentences = [sentence for sentence in sentences if sentence and sentence_is_about_problem(sentence)]
         item = _compact(p, rel, text)
         if any(solution_re.search(sentence) for sentence in relevant_sentences):
             buckets["existing_solutions"].append(item)
