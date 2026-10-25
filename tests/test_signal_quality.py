@@ -21,7 +21,7 @@ def test_signal_profile_exposes_tier_and_category():
 
 def test_maker_posts_are_marked_and_signal_confidence_reduced():
     profile = signal_quality.signal_profile(
-        "I built an invoice app, check it out and join the waitlist."
+        "I built an invoice app for a frustrating workflow; check it out and join the waitlist."
     )
     assert profile["promotional"] is True
     assert profile["matches"]
