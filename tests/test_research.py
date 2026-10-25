@@ -695,6 +695,7 @@ def test_timed_out_source_job_keeps_its_global_capacity_slot(monkeypatch):
         _, first = research.run_jobs([research.Job("hn", "first")])
         assert started.wait(timeout=1)
         assert first["hn"]["errors"] == ["timed out"]
+        assert first["hn"]["timed_out"] == 1
 
         _, second = research.run_jobs([research.Job("hn", "second")])
         assert second["hn"]["capacity_limited"] is True
@@ -842,3 +843,4 @@ def test_research_reports_planned_completed_and_succeeded_jobs_separately():
     out = research.research("accounting invoices", force=True)
     assert out["queries_planned"] >= out["queries_run"] >= out["queries_succeeded"]
     assert "queries_timed_out" in out
+    assert "queries_cancelled_before_start" in out
