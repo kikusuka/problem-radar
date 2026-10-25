@@ -30,11 +30,18 @@ SE = [
 def fakes(monkeypatch, tmp_path):
     monkeypatch.setattr(research, "RESEARCH_DIR", tmp_path)
     research._mem.clear()
+    S._reset_request_limits_for_tests()
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(list(HN)))
     monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result(list(SE)))
     monkeypatch.setitem(S.SOURCES, "reddit", lambda q, limit=20, **k: S.Result([], False, "blocked or unauthorized (403)"))
     monkeypatch.setitem(S.SOURCES, "reddit_community", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "gitlab", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "github", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "github_repo", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "scholar", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "petitions", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "nyc311", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "bluesky", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     monkeypatch.setitem(S.SOURCES, "arxiv", lambda q, limit=20, **k: S.Result([]))
@@ -74,14 +81,19 @@ def test_themes_and_groups_are_hints_not_gates():
     assert out["suggested_groups"] and out["suggested_groups"][0]["size"] >= 2
 
 
-def test_cache_is_used_second_time_and_empty_results_are_not_cached(monkeypatch):
+def test_cache_reuses_success_and_short_caches_empty_research(monkeypatch):
     research.research("quickbooks invoices", force=True)
     assert research.research("quickbooks invoices")["from_cache"] is True
-    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result([]))
-    monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: S.Result([]))
+
+    calls = []
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: (calls.append(("hn", q)), S.Result([]))[1])
+    monkeypatch.setitem(S.SOURCES, "se", lambda q, limit=20, **k: (calls.append(("se", q)), S.Result([]))[1])
     out = research.research("zzzz nothing", force=True)
     assert out["posts_relevant"] == 0 and "note" in out
-    assert "zzzz-nothing-quick" not in research._mem
+    calls_after_refresh = len(calls)
+    cached = research.research("zzzz nothing")
+    assert cached["from_cache"] is True
+    assert len(calls) == calls_after_refresh
 
 
 def test_search_pain_with_custom_query():
