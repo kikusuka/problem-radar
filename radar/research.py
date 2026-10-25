@@ -517,14 +517,14 @@ def _rel(terms: list[str], text: str) -> float:
     return max((relevance(t, text) for t in terms), default=1.0)
 
 
-def _rank(posts: list[S.Post], niche, require_pain: bool = True):
+def _rank(posts: list[S.Post], niche, require_pain: bool = True, enforce_constraints: bool = True):
     """Returns (ranked, near_misses). niche may be one topic or a list of equivalent terms (synonyms)."""
     terms = [niche] if isinstance(niche, str) else list(niche)
-    ranked, misses = _rank_inner(posts, terms, require_pain)
+    ranked, misses = _rank_inner(posts, terms, require_pain, enforce_constraints)
     return ranked, misses
 
 
-def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
+def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool, enforce_constraints: bool = True):
     ranked, misses = [], []
     for p in _dedupe(posts):
         text = _body(p)
@@ -557,7 +557,7 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
             rel = max(rel, 0.8 if community is True or community == "tight" else 0.6)
         # Community membership and broad word overlap cannot override hard constraints
         # explicitly stated by the user (e.g. offline + low-resource + Android).
-        if topic_terms and not constraints_match(topic_terms[0], text):
+        if enforce_constraints and topic_terms and not constraints_match(topic_terms[0], text):
             topic_match = False
         structured = p.source in STRUCTURED
         paper = p.source in PAPERS
@@ -720,12 +720,24 @@ def search(query: str, sources: list[str] | None = None, limit: int = 20, subred
         else:
             jobs.append(Job(n, query, {}, limit))
     raw, status = run_jobs(jobs)
-    ranked, _ = _rank(raw, [query], require_pain=False)
+    # This tool is explicitly for complaint discovery, not general topic search.
+    # Treat query words as a retrieval target, but label missing hard constraints
+    # instead of dropping every useful complaint that doesn't repeat each term.
+    ranked, _ = _rank(raw, [query], require_pain=True, enforce_constraints=False)
+    results = []
+    for _, post, rel, text in ranked[: max(5, min(limit, 60))]:
+        item = _compact(post, rel, text)
+        item["missing_constraints"] = missing_constraints(query, text)
+        results.append(item)
     return {
         "query": query,
         "coverage": status,
         "posts_fetched": len(raw),
-        "results": [_compact(p, rel, text) for _, p, rel, text in ranked[: max(5, min(limit, 60))]],
+        "results": results,
+        "note": (
+            "Results are topic-matched complaint leads. Inspect missing_constraints: a result can discuss the problem "
+            "without explicitly demonstrating every constraint in the query. Promotional launch posts are excluded."
+        ),
     }
 
 
