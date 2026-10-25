@@ -525,6 +525,11 @@ SOLUTION_WORDS = {
     "hardware": r"alternative|alternatives|product|device|gadget|kit|on amazon|kickstarter|i built|we built|open[- ]source hardware|sells",
     "policy": r"law|bill|act|ordinance|regulation|rule|petition|campaign|council|ban|policy|nonprofit|already working",
 }
+PAYMENT_EVIDENCE = re.compile(
+    r"\b(?:pay(?:s|ing)?|paid|subscription|hire(?:d)?|freelancer)\b|\$\s?\d+|"
+    r"\b\d+(?:\.\d+)?\s*(?:usd|dollars?|per month|/mo)\b",
+    re.I,
+)
 VALIDATION_GUIDE = (
     "Judge three things from the buckets. Saturation: many existing_solutions with strong reviews means the gap is thin; "
     "look for what they get wrong. Willingness to pay: paying_signals show people spending money or time. "
@@ -568,7 +573,13 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
         item = _compact(p, rel, text)
         if solution_re.search(text):
             buckets["existing_solutions"].append(item)
-        if MONEY_WORDS.search(text):
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        has_problem_payment = any(
+            PAYMENT_EVIDENCE.search(sentence)
+            and any(relevance(term, sentence, loose=True) > 0 for term in terms)
+            for sentence in sentences
+        )
+        if has_problem_payment:
             buckets["paying_signals"].append(item)
         if HACK_WORDS.search(text):
             buckets["workaround_signals"].append(item)
