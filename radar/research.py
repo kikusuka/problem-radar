@@ -744,8 +744,9 @@ def validate(problem: str, niche: str = "", lens: str = "software") -> dict:
     terms = list(dict.fromkeys([*variants, niche]))
     terms = [term for term in terms if term]
     def sentence_is_about_problem(sentence: str) -> bool:
-        if not constraints_match(problem, sentence):
-            return False
+        # Hard requirements are checked once against the whole candidate document below.
+        # Requiring every constraint in each individual sentence drops real evidence when
+        # the title or another sentence supplies the platform/offline/resource details.
         return any(relevance(term, sentence, loose=True) > 0 for term in terms)
 
     for p in _dedupe(raw):
