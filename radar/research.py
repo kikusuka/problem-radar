@@ -85,8 +85,8 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit"], "se": None},
-    "any": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit"], "se": None},
+    "software": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit", "gitlab"], "se": None},
+    "any": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit", "gitlab"], "se": None},
     "hardware": {"sources": ["reddit_community", "fda_devices", "se", "bluesky", "reddit", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
     "policy": {"sources": ["petitions", "nyc311", "reddit_community", "bluesky", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
@@ -197,8 +197,9 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     per = 40 if deep else 30
     default = list(cfg["sources"]) + (["github"] if is_dev_niche(niche) and lens in ("software", "any") else [])
     names = [s for s in (sources or default) if s in S.SOURCES]
-    if not sources:  # explicit source choices are honoured; defaults skip official data that does not apply to the region
-        names = [s for s in names if R.applies(s, region)]
+    if not sources:  # explicit source choices are honoured; defaults skip unavailable optional sources and non-applicable official data
+        available = S.enabled()
+        names = [s for s in names if R.applies(s, region) and available.get(s, {}).get("enabled", True)]
     queries = [niche] + [f"{niche} {m}" for m in mods]
     extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # synonyms supplied by the analyst
     jobs: list[Job] = []
@@ -323,7 +324,7 @@ def _body(p: S.Post) -> str:
     return clean(f"{p.title} {p.text}")
 
 
-EVIDENCE_TYPE = {"hn": "reported_need", "reddit": "reported_need", "reddit_community": "reported_need", "bluesky": "reported_need", "se": "reported_need", "github": "reported_need",
+EVIDENCE_TYPE = {"hn": "reported_need", "reddit": "reported_need", "reddit_community": "reported_need", "bluesky": "reported_need", "se": "reported_need", "github": "reported_need", "gitlab": "reported_need",
                  "fda_devices": "measured_outcome", "petitions": "service_request", "nyc311": "service_request",
                  "scholar": "research_gap", "arxiv": "research_gap", "europepmc": "research_gap"}
 
