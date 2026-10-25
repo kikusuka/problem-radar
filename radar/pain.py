@@ -491,4 +491,7 @@ def topic_fit(query: str, text: str, title: str = "") -> bool:
             )
         if found:
             matched += 1
-    return matched >= min(2, len(groups))
+    # Longer, more specific queries must match more than two generic/domain anchors.
+    # This prevents a post mentioning "Android + LLM" from matching a query about
+    # Android LLM crashes/out-of-memory when it never describes a failure.
+    return matched >= max(1, math.ceil(0.6 * len(groups)))

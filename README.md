@@ -148,8 +148,9 @@ Tests run offline against fake sources. Live behaviour of each source should be 
 
 ## Make Reddit work (recommended)
 
-Reddit blocks anonymous requests from hosting providers, so on a deployed server it shows up as `failed (403)`.
-It is the best source for everyday problems, so add free credentials:
+Reddit blocks anonymous requests from hosting providers, so on a deployed server it may show up as `failed (403)`.
+Direct Reddit search is prioritized in the request budget; community discovery is opt-in because it consumes both
+available Reddit request units. Add free credentials to improve direct-search access:
 
 1. Go to reddit.com/prefs/apps, choose "create another app", type **script**, any name, redirect URI `http://localhost`.
 2. Copy the client ID (under the app name) and the secret.
@@ -189,9 +190,10 @@ as `STACKEXCHANGE_KEY`. The server also backs off for two minutes after a 429 in
 
 ## What live testing taught us
 
-Searching all of Reddit for a topic returned mostly viral, off-topic posts. Version 4.5 is community-first: it finds
-the subreddits where the topic lives (for example r/HearingAids, r/dementia) and reads their top complaints of the
-year, so everyone in the results already cares about the topic.
+Searching all of Reddit for a topic can return viral, off-topic posts. Default research now prioritizes direct Reddit
+search so a community-discovery call cannot consume both Reddit request units and displace complaint retrieval.
+The `reddit_community` adapter remains available as an explicit source when community discovery itself is the goal;
+it costs two request units for subreddit lookup plus one complaint search, so it is not included in default lens plans.
 
 
 Early versions searched "niche + exact phrase" and returned almost nothing for specific topics, counted filler words

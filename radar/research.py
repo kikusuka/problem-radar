@@ -29,7 +29,7 @@ from .signal_quality import signal_profile
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
-CACHE_SCHEMA_VERSION = 4  # provider request budgets and source catalog changed
+CACHE_SCHEMA_VERSION = 5  # retrieval relevance, promotion filtering and Reddit budget priority changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
 MAX_JOBS_PER_REQUEST = 16  # total scheduled source-job budget for one public MCP tool call
@@ -87,12 +87,12 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["reddit_community", "hn", "se", "reddit", "gitlab"], "se": None},
-    "any": {"sources": ["reddit_community", "hn", "se", "reddit", "gitlab"], "se": None},
-    "hardware": {"sources": ["reddit_community", "fda_devices", "se", "reddit", "hn"],
+    "software": {"sources": ["reddit", "hn", "se", "gitlab"], "se": None},
+    "any": {"sources": ["reddit", "hn", "se", "gitlab"], "se": None},
+    "hardware": {"sources": ["reddit", "fda_devices", "se", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
-    "policy": {"sources": ["petitions", "nyc311", "reddit_community", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
-    "research": {"sources": ["scholar", "arxiv", "europepmc", "se", "hn", "reddit_community", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
+    "policy": {"sources": ["petitions", "nyc311", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
+    "research": {"sources": ["scholar", "arxiv", "europepmc", "se", "hn", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
 }
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
 
@@ -163,6 +163,11 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
             grouped[job.source] = []
             order.append(job.source)
         grouped[job.source].append(job)
+
+    # A discovered-community request consumes the full Reddit request allowance.
+    # Stable priority keeps direct Reddit search ahead of that expensive adapter, even
+    # when callers explicitly request both sources in community-first order.
+    order.sort(key=lambda source: source == "reddit_community")
 
     selected: list[Job] = []
     requests_by_provider: dict[str, int] = {}
@@ -556,12 +561,25 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
             topic_match = False
         structured = p.source in STRUCTURED
         paper = p.source in PAPERS
+
+        # A launch announcement is a product lead, not independent evidence that users
+        # have pain. Keep topical launches in near_misses for inspection, but never rank
+        # them as complaints. This also applies to search_pain, whose results are meant
+        # to surface complaints rather than marketing copy.
+        if profile["promotional"] and not structured and not paper:
+            topic_related = any(topic_fit(t, text, p.title) for t in topic_terms)
+            if topic_related and (rel > 0 or any(relevance(t, text, loose=True) > 0 for t in terms)):
+                title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
+                lead_score = heat(text, p.score, p.comments) + 3 * rel + title_hit - 6.0
+                misses.append((lead_score, p, rel, text))
+            continue
+
         if require_pain and paper and gap_cues(text) < 1:
             continue
         if require_pain and not structured and not paper and p.source not in WEB and not looks_like_pain(text):
             continue
         title_hit = 4 if any(relevance(t, p.title, loose=True) > 0 for t in terms) else 0
-        signal_bonus = min(1.5, profile["weighted_score"]) * (0.5 if profile["promotional"] else 1.0)
+        signal_bonus = min(1.5, profile["weighted_score"])
         score = heat(text, p.score, p.comments) + signal_bonus + 3 * rel + title_hit + (2 * gap_cues(text) if paper else 0) + (3 if structured else 0)
         about = community or structured or paper or p.source in WEB or is_focused(terms, p.title, text)
         if not about or not topic_match:
@@ -652,12 +670,20 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     }
     if len(kept) < 10 and misses:
         payload["near_misses"] = [
-            {"title": p.title[:120], "url": p.url, "source": p.source, "snippet": clean(p.text or p.title)[:160],
-             "missing_constraints": missing_constraints(niche, _body(p))}
+            {
+                "title": p.title[:120], "url": p.url, "source": p.source,
+                "snippet": clean(p.text or p.title)[:160],
+                "missing_constraints": missing_constraints(niche, _body(p)),
+                "reason": (
+                    "promotional product announcement; inspect as a product lead, not independent pain evidence"
+                    if signal_profile(_body(p))["promotional"]
+                    else "related candidate did not clear the complete relevance or hard-constraint checks"
+                ),
+            }
             for _, p, _, _ in misses[:8]
         ]
-        payload["near_misses_note"] = ("These candidates did not qualify as top results. Check missing_constraints first: some lack a hard requirement, "
-                                       "while others may use different words for the same problem. Retry with also=[synonyms] only when those terms preserve the required constraints.")
+        payload["near_misses_note"] = ("These candidates did not qualify as top results. Some may lack hard requirements, use different wording, "
+                                       "or be promotional product leads rather than independent complaint evidence. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
     if reg:
         payload["region"] = {"name": reg["name"], "code": reg["code"]}
