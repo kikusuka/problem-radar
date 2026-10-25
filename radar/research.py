@@ -365,11 +365,14 @@ def _rank_inner(posts: list[S.Post], terms: list[str], require_pain: bool):
         text = _body(p)
         rel = _rel(terms, text)
         community = p.meta.get("community")
-        topic_match = any(is_relevant(t, text) for t in terms if t and t.strip())
-        # Community membership is only a discovery hint. It must never override the post's own topic relevance.
+        topic_terms = [t for t in terms if t and t.strip()]
+        topic_match = any(is_relevant(t, text) for t in topic_terms)
+        community_match = any(relevance(t, text, loose=True) >= 0.5 for t in topic_terms)
+        if community and community_match:
+            topic_match = True
         if not topic_match:
             community = False
-        elif community == "loose" and not any(relevance(t, text, loose=True) > 0 for t in terms):
+        elif community == "loose" and not community_match:
             community = False
         if community:
             rel = max(rel, 0.8 if community is True or community == "tight" else 0.6)
