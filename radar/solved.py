@@ -13,7 +13,7 @@ import re
 import time
 
 from . import sources as S
-from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_fit
+from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_fit, topic_core_query
 from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
 SOLUTION_RE = re.compile(
@@ -107,6 +107,46 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
     return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "caveat": caveat}
 
 
+def _solution_search_queries(problem: str, lens: str) -> list[str]:
+    """Search the core subject before strict requirements, then validate constraints on candidates.
+
+    Repo metadata and product descriptions often omit resource details. Keeping the subject
+    query broad enough discovers candidate solutions; missing requirements become explicit
+    near-misses rather than disappearing before the user can inspect them.
+    """
+    core = topic_core_query(problem)
+    platform_match = re.search(r"\b(android|ios|iphone|ipad|windows|linux|macos|chromeos)\b", problem, re.I)
+    platform = platform_match.group(1) if platform_match else ""
+    has_model = bool(re.search(
+        r"\b(?:ai|llms?|slms?|language models?|llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\b",
+        problem, re.I,
+    ))
+    has_assistant = bool(re.search(
+        r"\b(?:assistant|chatbot|chat bot|voice assistant|voice chat|conversational agent)\b",
+        problem, re.I,
+    ))
+    candidates: list[str] = []
+
+    def add(value: str) -> None:
+        value = re.sub(r"\s+", " ", value).strip(" ,;:")
+        if value and value.casefold() not in {q.casefold() for q in candidates}:
+            candidates.append(value)
+
+    if platform and core:
+        add(f"{platform} {core}")
+    if has_model:
+        add(f"{platform} local LLM" if platform else "local LLM")
+    if has_assistant:
+        add(f"{platform} AI chatbot" if platform else "AI chatbot")
+    if core:
+        add(core)
+    # Keep one constraint-rich query as a final candidate for source coverage/reporting.
+    strict = query_variants(problem)
+    for query in strict:
+        add(query)
+    return candidates[:4]
+
+
 def check(problem: str, lens: str = "software") -> dict:
     if not isinstance(problem, str) or not problem.strip():
         raise ValueError("problem must be a non-empty string")
@@ -115,32 +155,54 @@ def check(problem: str, lens: str = "software") -> dict:
         raise ValueError(f"problem must be at most {MAX_QUERY_CHARS} characters")
     lens = lens if lens in ("software", "hardware", "policy", "research", "any") else "software"
     variants = query_variants(problem)
+    solution_queries = _solution_search_queries(problem, lens)
     jobs: list[Job] = []
-    for v in variants:
-        jobs += [Job("hn", f"Show HN {v}", {}, 20), Job("hn", f"{v} alternative", {}, 20)]
-        if lens in ("software", "any", "hardware"):
-            jobs.append(Job("github_repo", v if lens != "hardware" else f"{v} open source", {}, 15))
-        if lens in ("software", "research", "any", "hardware"):
-            jobs.append(Job("scholar", v, {}, 15))
-        if lens == "research":
-            jobs.append(Job("arxiv", v, {}, 15))
-        if lens == "hardware":
-            jobs += [Job("reddit", f"{v} diy", {}, 15), Job("reddit", f"{v} I bought", {}, 15)]
-        if lens == "policy":
-            jobs += [Job("petitions", v, {}, 15), Job("reddit", f"{v} law OR policy OR campaign", {}, 15)]
+
+    # One distinct query per provider slot. Previously the first two HN slots were
+    # "Show HN X" and "X alternative"—near duplicates that wasted half the budget.
+    hn_queries = solution_queries[:2]
+    for index, query in enumerate(hn_queries):
+        jobs.append(Job("hn", f"Show HN {query}" if index == 0 else query, {}, 20))
+    if lens in ("software", "any", "hardware"):
+        for query in solution_queries[:2]:
+            jobs.append(Job("github_repo", query if lens != "hardware" else f"{query} open source", {}, 15))
+    if lens in ("software", "research", "any", "hardware"):
+        # Broad topic query plus the compact constraint-rich query; the paper source
+        # must not consume both calls on only a long, overly restrictive description.
+        scholar_queries = list(dict.fromkeys([*solution_queries[:1], *(variants[:1])]))
+        for query in scholar_queries[:2]:
+            jobs.append(Job("scholar", query, {}, 15))
+    if lens == "research" and solution_queries:
+        jobs.append(Job("arxiv", solution_queries[0], {}, 15))
+    if lens == "hardware":
+        for query in solution_queries[:2]:
+            jobs.append(Job("reddit", f"{query} diy", {}, 15))
+    if lens == "policy":
+        for query in solution_queries[:2]:
+            jobs.append(Job("petitions", query, {}, 15))
+            jobs.append(Job("reddit", f"{query} law OR policy OR campaign", {}, 15))
+
     raw, status = run_jobs(jobs)
 
-    key = variants[0]
+    topic_queries = list(dict.fromkeys([*solution_queries, *variants]))
     projects, discussion, papers, actions = [], [], [], []
     constraint_mismatch_count = 0
     constraint_near_misses: list[tuple[float, dict]] = []
     for p in _dedupe(raw):
         text = _body(p)
-        rel = max((relevance(variant, text) for variant in variants), default=0.0)
-        # Loose token overlap is only a prefilter. Require subject anchors too, so
-        # generic words like "running", "local", or "project" cannot pass as relevance.
-        if rel < 0.5 or not topic_fit(problem, text, p.title):
+        matching_queries = [
+            query for query in topic_queries
+            if topic_fit(query, text, p.title)
+        ]
+        if not matching_queries:
             continue
+        rel = max((relevance(query, text) for query in matching_queries), default=0.0)
+        if rel < 0.35:
+            continue
+
+        # Subject match and requirements fit are deliberately separate. A relevant
+        # project that omits low-RAM or offline details is not a matching solution,
+        # but it is an important near-miss to inspect, not a result to silently erase.
         if not constraints_match(problem, text):
             constraint_mismatch_count += 1
             constraint_near_misses.append((rel, {
@@ -150,6 +212,7 @@ def check(problem: str, lens: str = "software") -> dict:
                 "snippet": (p.text or p.title)[:260],
                 "missing_constraints": missing_constraints(problem, text),
                 "relevance": round(rel, 2),
+                "candidate_type": "existing_project" if p.source == "github_repo" else "related_product_or_discussion",
             }))
             continue
         if p.source == "github_repo":
@@ -160,6 +223,7 @@ def check(problem: str, lens: str = "software") -> dict:
             actions.append(_compact(p, rel, text))
         elif SOLUTION_RE.search(text):
             discussion.append(_compact(p, rel, text))
+
     projects.sort(key=lambda x: x["stars"], reverse=True)
     papers.sort(key=lambda x: x["score"], reverse=True)
     actions.sort(key=lambda x: x["score"], reverse=True)
@@ -167,17 +231,25 @@ def check(problem: str, lens: str = "software") -> dict:
     sources_ok = sum(1 for s in status.values() if s.get("state") in ("ok", "partial"))
     assessment = assess(projects, papers, actions, lens, discussion, len(raw), sources_ok)
     constraint_near_misses.sort(key=lambda item: item[0], reverse=True)
-    if not (projects or papers or actions or discussion) and constraint_mismatch_count and assessment["hint"] == "no_clear_solution_found":
+    if not (projects or papers or actions or discussion) and constraint_mismatch_count and assessment["hint"] in {
+        "no_clear_solution_found", "inconclusive_search_too_thin"
+    }:
         assessment["hint"] = "inconclusive_constraints_not_matched"
-        assessment["reasons"] = [f"{constraint_mismatch_count} related candidate(s) did not demonstrate all explicit constraints."]
-        assessment["caveat"] += " A candidate was excluded if it did not show the requested offline, hardware/resource or platform constraint; inspect related results and broaden the search before concluding."
+        assessment["reasons"] = [
+            f"{constraint_mismatch_count} related candidate(s) matched the subject but did not demonstrate every explicit requirement."
+        ]
+        assessment["caveat"] += (
+            " Relevant candidates were found but did not demonstrate all requested constraints; inspect the near-misses and "
+            "verify each candidate's actual capabilities before concluding the space is unsolved."
+        )
     return {
         "problem": problem,
         "lens": lens,
         "searched_as": variants,
+        "solution_search_queries": solution_queries,
         "required_constraints": missing_constraints(problem, ""),
         "constraint_candidates_excluded": constraint_mismatch_count,
-        "constraint_near_misses": [item for _, item in constraint_near_misses[:5]],
+        "constraint_near_misses": [item for _, item in constraint_near_misses[:8]],
         "coverage": status,
         "assessment": assessment,
         "existing_projects": projects[:8],
@@ -186,8 +258,9 @@ def check(problem: str, lens: str = "software") -> dict:
         "public_actions": actions[:5],
         "gap_guide": GAP_ANGLES,
         "llm_web_search_suggestions": (
-            [f"{variants[0]} buy price", f"{variants[0]} open source", f"best {variants[0]} alternatives", f"{variants[0]} reviews complaints"]
-            if lens in ("hardware", "software", "any") else web_suggestions(variants[0], lens)
+            [f"{solution_queries[0]} buy price", f"{solution_queries[0]} open source",
+             f"best {solution_queries[0]} alternatives", f"{solution_queries[0]} reviews complaints"]
+            if lens in ("hardware", "software", "any") else web_suggestions(solution_queries[0] if solution_queries else variants[0], lens)
         ),
         "web_search_note": "If you have a web search tool, run these: this tool cannot see shops, review sites or most news.",
         "next": "Call validate_problem to check demand, then talk to 5 real people about the gap you found.",
