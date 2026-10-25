@@ -568,7 +568,7 @@ _CORE_TOPIC_GROUPS = {
 
 
 _AI_MODEL_SPECIFIC_CUE = re.compile(
-    r"\b(?:llms?|large language models?|small language models?|tiny language models?|"
+    r"\b(?:llms?|language models?|large language models?|small language models?|tiny language models?|"
     r"llama(?:\.cpp)?|ollama|gguf|qwen|mistral|gemma)\b",
     re.I,
 )
