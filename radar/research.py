@@ -15,7 +15,7 @@ import re
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeout
-from threading import BoundedSemaphore
+from threading import BoundedSemaphore, Lock
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,7 +29,7 @@ from .signal_quality import signal_profile
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
-CACHE_SCHEMA_VERSION = 6  # bounded query expansion and evidence classification changed
+CACHE_SCHEMA_VERSION = 7  # request enforcement, topic anchors, support tier, and cache keys changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
 MAX_JOBS_PER_REQUEST = 16  # total scheduled source-job budget for one public MCP tool call
@@ -97,6 +97,93 @@ LENSES = {
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
 
 _mem: dict = {}
+_CACHE_FLIGHTS: dict[str, dict] = {}
+_CACHE_FLIGHTS_LOCK = Lock()
+_EMPTY_EVIDENCE_TTL = 15 * 60
+_EMPTY_SUCCESS_TTL = 5 * 60
+_FAILED_REQUEST_TTL = 60
+
+
+def _cache_key(namespace: str, payload: dict) -> str:
+    serialized = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str, separators=(",", ":"))
+    digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return f"v{CACHE_SCHEMA_VERSION}-{namespace}-{digest}"
+
+
+def _result_cache_ttl(payload: dict) -> int:
+    """Cache useful evidence longer; briefly cache empty/limited outcomes to protect free quotas."""
+    if "top_posts" in payload:
+        if payload.get("posts_relevant", 0) > 0:
+            return CACHE_TTL
+        if payload.get("supporting_evidence_count", 0) or payload.get("near_misses"):
+            return _EMPTY_EVIDENCE_TTL
+        coverage = payload.get("coverage", {})
+        if any(row.get("ok", 0) for row in coverage.values()):
+            return _EMPTY_SUCCESS_TTL
+        return _FAILED_REQUEST_TTL
+    if "evidence_status" in payload:
+        if payload.get("evidence_status") == "evidence_found_needs_validation":
+            return 6 * 3600
+        if payload.get("counts") and any(payload["counts"].values()):
+            return _EMPTY_EVIDENCE_TTL
+        coverage = payload.get("coverage", {})
+        if any(row.get("ok", 0) for row in coverage.values()):
+            return _EMPTY_SUCCESS_TTL
+        return _FAILED_REQUEST_TTL
+    if "assessment" in payload:
+        if payload.get("existing_projects") or payload.get("products_and_discussion") or payload.get("papers") or payload.get("public_actions"):
+            return 6 * 3600
+        coverage = payload.get("coverage", {})
+        if any(row.get("ok", 0) for row in coverage.values()):
+            return _EMPTY_EVIDENCE_TTL
+        return _FAILED_REQUEST_TTL
+    return _EMPTY_EVIDENCE_TTL
+
+
+def _acquire_singleflight(key: str) -> tuple[dict, bool]:
+    with _CACHE_FLIGHTS_LOCK:
+        entry = _CACHE_FLIGHTS.get(key)
+        if entry is None:
+            entry = {"lock": Lock(), "users": 0}
+            _CACHE_FLIGHTS[key] = entry
+        entry["users"] += 1
+    acquired = entry["lock"].acquire(blocking=False)
+    waited = not acquired
+    if waited:
+        entry["lock"].acquire()
+    return entry, waited
+
+
+def _release_singleflight(key: str, entry: dict) -> None:
+    entry["lock"].release()
+    with _CACHE_FLIGHTS_LOCK:
+        entry["users"] -= 1
+        if entry["users"] <= 0 and _CACHE_FLIGHTS.get(key) is entry:
+            del _CACHE_FLIGHTS[key]
+
+
+def cached_result(namespace: str, key_material: dict, compute, force: bool = False) -> dict:
+    """Cache tool results and coalesce concurrent identical work in this process."""
+    key = _cache_key(namespace, key_material)
+    flight, waited = _acquire_singleflight(key)
+    try:
+        # If a same-key request waited for an in-flight refresh, reuse that result even
+        # when both callers asked for refresh. This prevents simultaneous refresh storms.
+        if not force or waited:
+            cached = _load(key)
+            if cached is not None:
+                cached["from_cache"] = True
+                return cached
+        payload = compute()
+        if isinstance(payload, dict):
+            payload = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+            payload.setdefault("generated_at", int(time.time()))
+            payload["from_cache"] = False
+            _save(key, payload, ttl_seconds=_result_cache_ttl(payload))
+        return payload
+    finally:
+        _release_singleflight(key, flight)
+
 
 
 def slug(s: str) -> str:
