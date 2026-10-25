@@ -478,9 +478,9 @@ def _topic_groups(query: str) -> list[tuple[str, str]]:
 
 
 _TECHNICAL_FAILURE_CUE = re.compile(
-    r"\\b(?:crash(?:es|ed|ing)?|oom|out[-\\s]?of[-\\s]?memory|out[-\\s]?of[-\\s]?ram|"
+    r"\b(?:crash(?:es|ed|ing)?|oom|out[-\s]?of[-\s]?memory|out[-\s]?of[-\s]?ram|"
     r"memory exhaustion|not enough ram|memory leak|freez(?:e|es|ing|en)?|hangs?|hung|"
-    r"fails? to load|failure to load|battery drain)\\b",
+    r"fails? to load|failure to load|battery drain)\b",
     re.I,
 )
 
