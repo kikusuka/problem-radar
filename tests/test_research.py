@@ -742,7 +742,7 @@ def test_ranking_requires_explicit_hard_constraints_even_with_topic_overlap():
     valid = P("hn", 1201, "Offline AI assistant for low-end Android phones",
               "This runs offline on low-end Android phones with limited RAM; it is frustrating and I wish there were a better way.", "a")
     misses_resource = P("hn", 1202, "Offline AI assistant for Android",
-                        "This is frustrating: the assistant runs offline on Android but needs a flagship phone with 12 GB RAM.", "b")
+                        "This is frustrating and expensive: the assistant runs offline on Android but needs a flagship phone with 12 GB RAM.", "b")
     ranked, near = research._rank([valid, misses_resource], [niche])
     assert [item[1].id for item in ranked] == ["hn-1201"]
     assert any(item[1].id == "hn-1202" for item in near)
