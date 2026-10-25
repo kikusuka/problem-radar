@@ -111,7 +111,7 @@ TIER_WEIGHTS = {"pain_point": 1.0, "emotional": 0.8, "comparison": 0.6, "ask": 0
 
 _COMPILED = {
     tier: [
-        (re.compile(r"\\b" + re.escape(phrase) + r"\\b", re.IGNORECASE), phrase, category)
+        (re.compile(r"\b" + re.escape(phrase) + r"\b", re.IGNORECASE), phrase, category)
         for phrase, category in phrases
     ]
     for tier, phrases in SIGNAL_PHRASES.items()
@@ -120,11 +120,11 @@ _COMPILED = {
 # Borrowed concept: require both maker language and a call to action before
 # marking a result promotional. A maker post can still contain real evidence.
 _PROMO_TRIGGER = re.compile(
-    r"\\b(?:i|we)\\s+(?:built|made|created|designed|developed|founded|launched)\\b",
+    r"\b(?:i|we)\\s+(?:built|made|created|designed|developed|founded|launched)\\b",
     re.IGNORECASE,
 )
 _PROMO_CTA = re.compile(
-    r"\\b(?:check it out|happy to share|beta|launching|sign up|try it(?: out)?|"
+    r"\b(?:check it out|happy to share|beta|launching|sign up|try it(?: out)?|"
     r"give it a try|feedback welcome|open beta|available now|join the waitlist)\\b",
     re.IGNORECASE,
 )
