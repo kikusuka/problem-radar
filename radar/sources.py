@@ -332,8 +332,8 @@ _ARXIV_NS = "{http://www.w3.org/2005/Atom}"
 def arxiv(query: str, limit: int = 20, **_) -> Result:
     """Search arXiv abstracts. One request per query, globally spaced by at least 3 seconds."""
     global _arxiv_last_request
-    params = {
     safe_query = re.sub("[^A-Za-z0-9 ._-]", " ", query)[:180].strip()
+    params = {
         "search_query": f"all:{safe_query}",
         "start": 0,
         "max_results": max(1, min(int(limit), 20)),
