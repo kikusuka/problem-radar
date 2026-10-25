@@ -122,6 +122,8 @@ def check(problem: str, lens: str = "software") -> dict:
             jobs.append(Job("github_repo", v if lens != "hardware" else f"{v} open source", {}, 15))
         if lens in ("software", "research", "any", "hardware"):
             jobs.append(Job("scholar", v, {}, 15))
+        if lens == "research":
+            jobs.append(Job("arxiv", v, {}, 15))
         if lens == "hardware":
             jobs += [Job("reddit", f"{v} diy", {}, 15), Job("reddit", f"{v} I bought", {}, 15)]
         if lens == "policy":
@@ -141,7 +143,7 @@ def check(problem: str, lens: str = "software") -> dict:
             continue
         if p.source == "github_repo":
             projects.append(_project(p))
-        elif p.source == "scholar":
+        elif p.source in ("scholar", "arxiv"):
             papers.append(_compact(p, rel, text))
         elif p.source == "petitions":
             actions.append(_compact(p, rel, text))

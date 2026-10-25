@@ -1,13 +1,18 @@
-"""Source adapters. Every adapter returns a Result and never raises, so one broken source can't sink a run.
+"""Source adapters. Every adapter returns a Result so one broken source can't sink a run.
 
-Sources (all free; keys are optional upgrades):
-  hn      Hacker News via Algolia            no key
-  se      Stack Exchange network             no key (STACKEXCHANGE_KEY raises the daily quota)
-  reddit  Reddit                             public JSON often blocked from cloud IPs;
-                                             set REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET for reliable OAuth access
-  github  GitHub issues                      GITHUB_TOKEN recommended
-  petitions  UK Parliament petitions         no key; signature counts show public demand (UK only)
-  nyc311     NYC 311 complaints              no key; complaint counts by type (NYC only)
+Sources (free public access or free tiers; quotas and access policies still apply):
+  hn         Hacker News / Algolia           no key
+  se         Stack Exchange                  optional free STACKEXCHANGE_KEY
+  reddit     Reddit                          OAuth credentials recommended; review current API terms
+  bluesky    Bluesky public posts            no key; public API
+  github     GitHub issues and repositories  optional GITHUB_TOKEN
+  gitlab     GitLab public issue search      optional free GITLAB_TOKEN
+  scholar    OpenAlex papers                 optional free OPENALEX_API_KEY
+  arxiv      CS/AI and other preprints       no key; 3-second shared request spacing
+  europepmc  Biomedical papers and preprints no key
+  petitions  UK Parliament petitions         no key; UK only
+  nyc311     NYC 311 complaints              no key; NYC only
+  openFDA    Medical-device event reports    no key; US only
 """
 from __future__ import annotations
 
@@ -16,6 +21,8 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from threading import Lock
+import xml.etree.ElementTree as ET
 
 import httpx
 
@@ -135,6 +142,20 @@ def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
 
 # --------------------------------------------------------------------- Reddit
 _reddit_token = {"value": "", "exp": 0.0}
+_reddit_token_lock = Lock()
+
+
+def startup_request_cost(provider: str) -> int:
+    """Requests needed to establish a provider session before the first data query.
+
+    Reddit OAuth token exchange is a real HTTP request. Count it against the same
+    per-call budget if credentials are configured and the in-memory token is expired.
+    """
+    if provider == "reddit":
+        cid, secret = os.environ.get("REDDIT_CLIENT_ID"), os.environ.get("REDDIT_CLIENT_SECRET")
+        if cid and secret and not (_reddit_token["value"] and time.time() < _reddit_token["exp"]):
+            return 1
+    return 0
 
 
 def _reddit_ua() -> dict:
@@ -147,13 +168,16 @@ def _reddit_oauth() -> str:
     cid, secret = os.environ.get("REDDIT_CLIENT_ID"), os.environ.get("REDDIT_CLIENT_SECRET")
     if not (cid and secret):
         return ""
-    if _reddit_token["value"] and time.time() < _reddit_token["exp"]:
+    # Avoid concurrent source jobs issuing duplicate token requests when the shared
+    # in-memory token is missing or near expiry.
+    with _reddit_token_lock:
+        if _reddit_token["value"] and time.time() < _reddit_token["exp"]:
+            return _reddit_token["value"]
+        data, _ = _get("https://www.reddit.com/api/v1/access_token", headers=_reddit_ua(), auth=(cid, secret), method="POST",
+                       data={"grant_type": "client_credentials"})
+        if data and data.get("access_token"):
+            _reddit_token.update(value=data["access_token"], exp=time.time() + int(data.get("expires_in", 3600)) - 60)
         return _reddit_token["value"]
-    data, _ = _get("https://www.reddit.com/api/v1/access_token", headers=_reddit_ua(), auth=(cid, secret), method="POST",
-                   data={"grant_type": "client_credentials"})
-    if data and data.get("access_token"):
-        _reddit_token.update(value=data["access_token"], exp=time.time() + int(data.get("expires_in", 3600)) - 60)
-    return _reddit_token["value"]
 
 
 def reddit(query: str, limit: int = 20, subreddit: str | None = None, sort: str = "relevance", t: str = "all", **_) -> Result:
@@ -212,7 +236,9 @@ def find_subreddits(query: str, want: int = 3) -> tuple[list[str], str]:
 def reddit_community(query: str, limit: int = 30, **_) -> Result:
     """Community-first Reddit: find the subreddits for a topic, then take their top complaints from the last year.
     Much less noise than searching all of Reddit, because everyone in these places already cares about the topic."""
-    subs, err = find_subreddits(query)
+    # One community-discovery call plus at most one community-search call: Reddit gets
+    # a strict two-request budget even when a topic has many candidate communities.
+    subs, err = find_subreddits(query, want=1)
     if err:
         return Result([], False, err)
     out, errs = [], []
@@ -287,45 +313,132 @@ def europepmc(query: str, limit: int = 20, **_) -> Result:
     return Result(out)
 
 
-# ------------------------------------------------- DuckDuckGo (best-effort fallback, no key)
-_ddg_cooldown = {"until": 0.0}
-DDG_ENTRY = re.compile(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>', re.S)
+# ----------------------------------------------------- Bluesky public search
+def bluesky(query: str, limit: int = 20, **_) -> Result:
+    """Search public Bluesky posts via the official public AppView; no account or API key required."""
+    params = {"q": query, "limit": max(1, min(int(limit), 25)), "sort": "latest"}
+    data, err = _get("https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts", params)
+    if data is None:
+        return Result([], False, err)
+
+    out = []
+    for item in data.get("posts", []):
+        record = item.get("record") or {}
+        author = item.get("author") or {}
+        text = _plain(record.get("text") or "")
+        uri = item.get("uri") or ""
+        handle = author.get("handle") or ""
+        rkey = uri.rsplit("/", 1)[-1] if uri else ""
+        url = f"https://bsky.app/profile/{handle}/post/{rkey}" if handle and rkey else ""
+        if not text or not url:
+            continue
+        created = str(record.get("createdAt") or item.get("indexedAt") or "")[:10]
+        out.append(Post(
+            "bluesky", f"bsky-{uri}", text[:140], text[:1500], url, handle,
+            int(item.get("likeCount") or 0), int(item.get("replyCount") or 0), created,
+            {"site": "bluesky", "reposts": int(item.get("repostCount") or 0)},
+        ))
+    return Result(out)
 
 
-def _ddg_url(href: str) -> str:
-    """DuckDuckGo wraps links as //duckduckgo.com/l/?uddg=<encoded url>. Unwrap them."""
-    from urllib.parse import parse_qs, unquote, urlparse
-    href = html.unescape(href)
-    if "uddg=" in href:
-        q = parse_qs(urlparse(href if "//" in href else "//" + href).query)
-        if q.get("uddg"):
-            return unquote(q["uddg"][0])
-    return ("https:" + href) if href.startswith("//") else href
+# ----------------------------------------------------- arXiv scholarly search
+_ARXIV_LOCK = Lock()
+_arxiv_last_request = 0.0
+_ARXIV_NS = "{http://www.w3.org/2005/Atom}"
 
 
-def ddg(query: str, limit: int = 10, **_) -> Result:
-    """DuckDuckGo HTML results. NO official API exists: this reads a public page, which DuckDuckGo may block or disallow,
-    especially from a shared server IP. It is a last-resort fallback: it backs off for 10 minutes when blocked and
-    never raises. Results are web pages (not complaints), so treat them as leads to verify."""
-    if os.environ.get("DISABLE_DDG") == "1":
-        return Result([], True, "disabled (DISABLE_DDG=1)", skipped=True)
-    if time.time() < _ddg_cooldown["until"]:
-        return Result([], False, "blocked or rate limited; cooling down")
+def arxiv(query: str, limit: int = 20, **_) -> Result:
+    """Search arXiv abstracts; one query at a time and at least three seconds between HTTP requests."""
+    global _arxiv_last_request
+    safe_query = re.sub("[^A-Za-z0-9 ._-]", " ", query)[:180].strip()
+    params = {
+        "search_query": f"all:{safe_query}",
+        "start": 0,
+        "max_results": max(1, min(int(limit), 20)),
+        "sortBy": "relevance",
+        "sortOrder": "descending",
+    }
     try:
-        r = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, timeout=TIMEOUT,
-                       headers={"User-Agent": "Mozilla/5.0 (compatible; problem-radar/0.2)"})
+        with _ARXIV_LOCK:
+            now = time.monotonic()
+            if _arxiv_last_request and now - _arxiv_last_request < 3.0:
+                return Result([], True, "deferred to honor arXiv's three-second request spacing; no retry attempted", skipped=True)
+            try:
+                response = httpx.get(
+                    "https://export.arxiv.org/api/query",
+                    params=params,
+                    timeout=TIMEOUT,
+                    headers={"User-Agent": UA},
+                )
+            except Exception as e:
+                _arxiv_last_request = time.monotonic()
+                return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
+            _arxiv_last_request = time.monotonic()
     except Exception as e:
         return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
-    if r.status_code in (202, 403, 429) or "anomaly" in r.text[:3000].lower():
-        _ddg_cooldown["until"] = time.time() + 600
-        return Result([], False, f"blocked or rate limited ({r.status_code})")
-    if r.status_code != 200:
-        return Result([], False, f"HTTP {r.status_code}")
+
+    if response.status_code == 429:
+        return Result([], False, "rate limited (429); no retry attempted")
+    if response.status_code >= 400:
+        return Result([], False, f"arXiv HTTP {response.status_code}")
+    try:
+        root = ET.fromstring(response.text)
+    except ET.ParseError as e:
+        return Result([], False, f"invalid arXiv Atom feed: {type(e).__name__}")
+
     out = []
-    for href, title, snippet in DDG_ENTRY.findall(r.text)[:limit]:
-        url = _ddg_url(href)
-        domain = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
-        out.append(Post("ddg", f"ddg-{url}", re.sub(r"\s+", " ", _plain(title)), re.sub(r"\s+", " ", _plain(snippet)), url, domain, 0, 0, "", {"site": domain}))
+    for entry in root.findall(f"{_ARXIV_NS}entry"):
+        get_text = lambda tag: " ".join((entry.findtext(f"{_ARXIV_NS}{tag}") or "").split())
+        paper_id = get_text("id").replace("http://arxiv.org/abs/", "https://arxiv.org/abs/")
+        title, abstract = get_text("title"), get_text("summary")
+        if not paper_id or not title:
+            continue
+        author_el = entry.find(f"{_ARXIV_NS}author/{_ARXIV_NS}name")
+        author = " ".join((author_el.text or "").split()) if author_el is not None else ""
+        out.append(Post(
+            "arxiv", f"arxiv-{paper_id.rsplit('/', 1)[-1]}", _plain(title), _plain(abstract)[:1500],
+            paper_id, author, 0, 0, get_text("published")[:10], {"site": "arxiv"},
+        ))
+    return Result(out)
+
+
+# ---------------------------------------------------------------------- GitLab
+def gitlab(query: str, limit: int = 20, **_) -> Result:
+    """Search GitLab.com issues. Requires a free read_api token; one HTTP request per query."""
+    token = os.environ.get("GITLAB_TOKEN", "").strip()
+    if not token:
+        return Result([], True, "skipped (GITLAB_TOKEN is not configured)", skipped=True)
+
+    data, err = _get(
+        "https://gitlab.com/api/v4/search",
+        {"scope": "issues", "search": query, "per_page": max(1, min(int(limit), 20))},
+        {"PRIVATE-TOKEN": token},
+    )
+    if data is None:
+        return Result([], False, err)
+    if not isinstance(data, list):
+        return Result([], False, "unexpected GitLab search response")
+
+    from urllib.parse import urlparse
+    out = []
+    for issue in data:
+        url = (issue.get("web_url") or "").strip()
+        if not url.startswith("https://gitlab.com/"):
+            continue
+        title = _plain(issue.get("title") or "")
+        description = _plain(issue.get("description") or "")
+        if not (title or description):
+            continue
+        path_parts = [part for part in urlparse(url).path.split("/") if part]
+        project_path = "/".join(path_parts[:path_parts.index("-")]) if "-" in path_parts else ""
+        author = (issue.get("author") or {}).get("username") or ""
+        created = str(issue.get("created_at") or "")[:10]
+        score = int(issue.get("upvotes") or 0) - int(issue.get("downvotes") or 0)
+        out.append(Post(
+            "gitlab", f"gl-{issue.get('id') or url}", title, description[:1500], url, author,
+            score, int(issue.get("user_notes_count") or 0), created,
+            {"site": project_path, "state": issue.get("state") or ""},
+        ))
     return Result(out)
 
 
@@ -365,7 +478,7 @@ def _abstract(inv: dict | None) -> str:
 
 
 def scholar(query: str, limit: int = 20, years: int = 4, **_) -> Result:
-    """Recent papers from OpenAlex. Set OPENALEX_MAILTO for the faster polite pool."""
+    """Recent OpenAlex papers. OPENALEX_API_KEY raises the free daily budget; OPENALEX_MAILTO identifies polite use."""
     since = time.strftime("%Y-01-01", time.gmtime(time.time() - years * 365 * 86400))
     params = {
         "search": query,
@@ -373,6 +486,8 @@ def scholar(query: str, limit: int = 20, years: int = 4, **_) -> Result:
         "filter": f"from_publication_date:{since}",
         "select": "id,doi,title,publication_year,cited_by_count,abstract_inverted_index",
     }
+    if os.environ.get("OPENALEX_API_KEY"):
+        params["api_key"] = os.environ["OPENALEX_API_KEY"]
     if os.environ.get("OPENALEX_MAILTO"):
         params["mailto"] = os.environ["OPENALEX_MAILTO"]
     data, err = _get("https://api.openalex.org/works", params)
@@ -460,7 +575,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "ddg": ddg, "github": github,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "bluesky": bluesky, "fda_devices": fda_devices, "europepmc": europepmc, "arxiv": arxiv, "gitlab": gitlab, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -468,14 +583,16 @@ def enabled() -> dict:
     """What is available right now, for the source_status tool."""
     reddit_mode = "oauth" if (os.environ.get("REDDIT_CLIENT_ID") and os.environ.get("REDDIT_CLIENT_SECRET")) else "public (often blocked on cloud hosts)"
     return {
-        "scholar": {"enabled": True, "note": "OpenAlex papers; no key" + ("" if os.environ.get("OPENALEX_MAILTO") else "; set OPENALEX_MAILTO for faster access")},
+        "scholar": {"enabled": True, "note": "OpenAlex papers; free key raises the daily budget" + (" (OPENALEX_API_KEY set)" if os.environ.get("OPENALEX_API_KEY") else "; set OPENALEX_API_KEY for the larger free daily budget") + ("; polite email set" if os.environ.get("OPENALEX_MAILTO") else "")},
         "github_repo": {"enabled": True, "note": "GitHub repository search, used by check_if_solved"},
         "petitions": {"enabled": True, "note": "UK Parliament petitions with signature counts; no key; UK only"},
         "nyc311": {"enabled": True, "note": "NYC 311 complaint counts, last 12 months; no key; NYC only"},
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
-        "ddg": {"enabled": os.environ.get("DISABLE_DDG") != "1", "note": "DuckDuckGo page fallback, best effort and used only when results are thin; may be blocked from a shared IP"},
+        "bluesky": {"enabled": True, "note": "public post search; no API key; request budget capped per provider"},
+        "arxiv": {"enabled": True, "note": "scholarly preprint search; no API key; enforces at least 3 seconds between requests"},
+        "gitlab": {"enabled": bool(os.environ.get("GITLAB_TOKEN", "").strip()), "note": ("authenticated public issue search; token configured" if os.environ.get("GITLAB_TOKEN", "").strip() else "optional; set GITLAB_TOKEN with read_api scope to search public issues; no keyless global search")},
         "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},

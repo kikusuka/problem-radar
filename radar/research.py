@@ -28,11 +28,19 @@ from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints,
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
-CACHE_SCHEMA_VERSION = 3  # evidence assessment and request-budget output changed
+CACHE_SCHEMA_VERSION = 4  # provider request budgets and source catalog changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
-MAX_JOBS_PER_REQUEST = 16  # total budget across every phase of one public MCP call
-MAX_FALLBACK_JOBS = 2  # reserve a small second-pass budget for thin default niche searches
+MAX_JOBS_PER_REQUEST = 16  # total scheduled source-job budget for one public MCP tool call
+MAX_REQUESTS_PER_PROVIDER_PER_CALL = 2  # actual outbound HTTP-request units per upstream provider
+SOURCE_PROVIDER_GROUP = {
+    "reddit": "reddit",
+    "reddit_community": "reddit",
+    "github": "github",
+    "github_repo": "github",
+}
+SOURCE_REQUEST_COST = {"reddit_community": 2}  # one subreddit lookup plus one community search
+SOURCE_JOB_LIMIT = {"arxiv": 1}  # strict global rate policy makes a second same-call query wasteful
 
 MAX_QUERY_LIST_ITEMS = 12
 MAX_QUERY_LIST_ITEM_CHARS = 100
@@ -65,8 +73,8 @@ _MAX_IN_FLIGHT_JOBS = 32
 _SOURCE_EXECUTOR = ThreadPoolExecutor(max_workers=_SOURCE_WORKERS, thread_name_prefix="problem-radar-source")
 _SOURCE_SLOTS = BoundedSemaphore(_MAX_IN_FLIGHT_JOBS)
 
-PAPERS = {"scholar", "europepmc"}
-WEB = {"ddg"}  # web pages: no pain-word test (a snippet is short), no bonus, lowest trust
+PAPERS = {"scholar", "europepmc", "arxiv"}
+WEB = set()  # no generic web-search or scraping fallback; sources must be explicit and attributable
 STRUCTURED = {"petitions", "nyc311", "fda_devices"}  # counts and signatures from official data; pain by nature, no pain-word test
 
 SE_GENERIC = ["superuser", "webapps", "workplace"]
@@ -78,12 +86,12 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["reddit_community", "hn", "se", "reddit"], "se": None},
-    "any": {"sources": ["reddit_community", "hn", "se", "reddit"], "se": None},
-    "hardware": {"sources": ["reddit_community", "fda_devices", "se", "reddit", "hn"],
+    "software": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit", "gitlab"], "se": None},
+    "any": {"sources": ["reddit_community", "hn", "se", "bluesky", "reddit", "gitlab"], "se": None},
+    "hardware": {"sources": ["reddit_community", "fda_devices", "se", "bluesky", "reddit", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
-    "policy": {"sources": ["petitions", "nyc311", "reddit_community", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
-    "research": {"sources": ["scholar", "europepmc", "se", "hn", "reddit_community", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
+    "policy": {"sources": ["petitions", "nyc311", "reddit_community", "bluesky", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
+    "research": {"sources": ["scholar", "arxiv", "europepmc", "se", "hn", "reddit_community", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
 }
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
 
@@ -139,14 +147,14 @@ class Job:
 
 
 def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]:
-    """Select a source-diverse subset for one public request.
+    """Select diverse source jobs while capping actual HTTP request units per provider.
 
-    Jobs are chosen round-robin by source, preserving each source's own query order.
-    This prevents a single broad/deep request from taking all shared source slots.
+    Most adapters make one HTTP request. reddit_community costs two: one community
+    lookup and one complaint search. Reddit endpoints share a budget, as do GitHub
+    issues and repository search. Selection is round-robin by source and preserves
+    the order of query variants within each source.
     """
     limit = max(0, limit)
-    if len(jobs) <= limit:
-        return jobs
     grouped: dict[str, list[Job]] = {}
     order: list[str] = []
     for job in jobs:
@@ -156,12 +164,28 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
         grouped[job.source].append(job)
 
     selected: list[Job] = []
+    requests_by_provider: dict[str, int] = {}
+    jobs_by_provider: dict[str, int] = {}
     while len(selected) < limit:
         progressed = False
         for source in order:
-            if grouped[source] and len(selected) < limit:
-                selected.append(grouped[source].pop(0))
-                progressed = True
+            pending = grouped[source]
+            if not pending or len(selected) >= limit:
+                continue
+            job = pending[0]
+            provider = SOURCE_PROVIDER_GROUP.get(source, source)
+            cost = SOURCE_REQUEST_COST.get(source, 1)
+            used = requests_by_provider.get(provider)
+            if used is None:
+                used = S.startup_request_cost(provider)
+            if used + cost > MAX_REQUESTS_PER_PROVIDER_PER_CALL:
+                continue
+            if jobs_by_provider.get(provider, 0) >= SOURCE_JOB_LIMIT.get(provider, MAX_REQUESTS_PER_PROVIDER_PER_CALL):
+                continue
+            selected.append(pending.pop(0))
+            requests_by_provider[provider] = used + cost
+            jobs_by_provider[provider] = jobs_by_provider.get(provider, 0) + 1
+            progressed = True
         if not progressed:
             break
     return selected
@@ -180,8 +204,9 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     per = 40 if deep else 30
     default = list(cfg["sources"]) + (["github"] if is_dev_niche(niche) and lens in ("software", "any") else [])
     names = [s for s in (sources or default) if s in S.SOURCES]
-    if not sources:  # explicit source choices are honoured; defaults skip official data that does not apply to the region
-        names = [s for s in names if R.applies(s, region)]
+    if not sources:  # explicit source choices are honoured; defaults skip unavailable optional sources and non-applicable official data
+        available = S.enabled()
+        names = [s for s in names if R.applies(s, region) and available.get(s, {}).get("enabled", True)]
     queries = [niche] + [f"{niche} {m}" for m in mods]
     extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # synonyms supplied by the analyst
     jobs: list[Job] = []
@@ -306,9 +331,9 @@ def _body(p: S.Post) -> str:
     return clean(f"{p.title} {p.text}")
 
 
-EVIDENCE_TYPE = {"hn": "reported_need", "reddit": "reported_need", "se": "reported_need", "github": "reported_need",
+EVIDENCE_TYPE = {"hn": "reported_need", "reddit": "reported_need", "reddit_community": "reported_need", "bluesky": "reported_need", "se": "reported_need", "github": "reported_need", "gitlab": "reported_need",
                  "fda_devices": "measured_outcome", "petitions": "service_request", "nyc311": "service_request",
-                 "scholar": "research_gap", "europepmc": "research_gap", "ddg": "web_lead"}
+                 "scholar": "research_gap", "arxiv": "research_gap", "europepmc": "research_gap"}
 
 EVIDENCE_NOTE = ("Evidence type: public online posts and open data. Not a survey: who is represented is unknown. Likely over-represented: "
                  "connected, literate, active platform users. Likely under-represented: offline, low-literacy, elderly, rural, disabled and "
@@ -558,33 +583,13 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
             return hit
 
     jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
-    # Default niche research may need a second pass. Reserve up to two of the
-    # same 16 request jobs for it instead of letting fallback bypass the cap.
-    ddg_enabled = sources is None and S.enabled()["ddg"]["enabled"]
-    initial_budget = MAX_JOBS_PER_REQUEST - MAX_FALLBACK_JOBS if ddg_enabled else MAX_JOBS_PER_REQUEST
-    main_jobs_budgeted = len(_limit_jobs(jobs, initial_budget))
-    raw, status = run_jobs(jobs, max_jobs=initial_budget)
+    budgeted_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
+    budgeted_provider_requests = sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in budgeted_jobs)
+    budgeted_providers = {SOURCE_PROVIDER_GROUP.get(j.source, j.source) for j in budgeted_jobs}
+    budgeted_provider_requests += sum(S.startup_request_cost(provider) for provider in budgeted_providers)
+    raw, status = run_jobs(jobs)
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
-    fallback_note = ""
-    fallback_jobs: list[Job] = []
-    fallback_jobs_budgeted = 0
-    if sources is None and len(kept) < 8 and ddg_enabled:
-        # Thin results: use only the remaining portion of the same request budget.
-        where = f" {reg['name']}" if reg else ""
-        qs = [f"{t} problems complaints{where}" for t in ([niche] + also)[:2]] + [f"{niche} struggle OR frustrating OR unmet need{where}"]
-        fallback_jobs = [Job("ddg", q, {}, 8) for q in qs]
-        remaining_budget = max(0, MAX_JOBS_PER_REQUEST - main_jobs_budgeted)
-        fallback_jobs_budgeted = len(_limit_jobs(fallback_jobs, remaining_budget))
-        web_raw, web_status = run_jobs(fallback_jobs, max_jobs=remaining_budget)
-        status.update(web_status)
-        if web_raw:
-            raw = raw + web_raw
-            ranked, misses = _rank(raw, [niche] + also)
-            kept = [p for _, p, _, _ in ranked]
-            fallback_note = "The initial results were thin, so DuckDuckGo was queried within the same 16-job budget. Returned web pages are low-trust leads to verify, not complaints."
-        else:
-            fallback_note = "The initial results were thin, but DuckDuckGo returned no additional usable leads within the shared request budget. Review coverage, try alternate wording, and verify with people who experience the problem."
     ranked = _diversify(ranked, limit)
     payload = {
         "niche": niche,
@@ -592,8 +597,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "goal": goal,
         "depth": depth,
         "generated_at": int(time.time()),
-        "queries_planned": len(jobs) + len(fallback_jobs),
-        "queries_budgeted": main_jobs_budgeted + fallback_jobs_budgeted,
+        "queries_planned": len(jobs),
+        "queries_budgeted": len(budgeted_jobs),
+        "provider_request_units_budgeted": budgeted_provider_requests,
         "queries_run": sum(st["completed"] for st in status.values()),
         "queries_succeeded": sum(st["ok"] for st in status.values()),
         "queries_timed_out": sum(st["timed_out"] for st in status.values()),
@@ -619,8 +625,6 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         payload["near_misses_note"] = ("These candidates did not qualify as top results. Check missing_constraints first: some lack a hard requirement, "
                                        "while others may use different words for the same problem. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
-    if fallback_note:
-        payload["fallback_note"] = fallback_note
     if reg:
         payload["region"] = {"name": reg["name"], "code": reg["code"]}
         payload["region_note"] = R.coverage_note(reg, list(status))

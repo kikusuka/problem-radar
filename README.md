@@ -32,13 +32,13 @@ Try: *"Use problem-radar. I'm a mechanical engineering student with 6 months for
 
 | Lens | Searches for | Sources |
 |---|---|---|
-| `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, GitHub |
-| `hardware` | devices, products, DIY | Electronics, DIY, 3D printing, robotics Stack Exchange sites |
-| `policy` | rules, services, civic fixes | UK Parliament petitions (signature counts), NYC 311 (complaint counts) |
-| `research` | open problems, thesis topics | OpenAlex and Europe PMC papers, academia and science Stack Exchange sites |
+| `software` | tools, automation, apps | Hacker News, Stack Exchange, Reddit, Bluesky, GitHub, GitLab (with token) |
+| `hardware` | devices, products, DIY | Reddit, Bluesky, assistive-device reports, specialist Stack Exchange sites |
+| `policy` | rules, services, civic fixes | UK Parliament petitions, NYC 311, community posts |
+| `research` | open problems, thesis topics | OpenAlex, arXiv, Europe PMC, academia and science Stack Exchange sites |
 | `any` | lets the analyst choose | general sources |
 
-Civic data covers only the UK and New York City today. Everything works without keys; optional keys widen
+Civic data covers only the UK and New York City today. Bluesky and arXiv need no key; GitLab issue search is enabled when `GITLAB_TOKEN` is set; optional keys widen
 coverage (see `.env.example`). Every result includes a `coverage` block per source (`ok`, `partial`, `failed`,
 `skipped`) with the error, so nothing fails silently.
 
@@ -50,17 +50,23 @@ retrieves public-source leads and does not call a hosted LLM or embedding API.
 
 To protect the shared free-tier instance, each query/problem is capped at 400 characters; `also` accepts up to
 four related terms of at most 200 characters each; source and Stack Exchange site selectors are bounded and
-deduplicated. One tool call can schedule at most 16 source jobs across all search phases. Default niche research
-reserves up to two of those jobs for a DuckDuckGo fallback when the first pass is thin. Across concurrent calls, the shared executor has
+deduplicated. One tool call can schedule at most 16 source jobs. Each upstream provider is limited to at most
+two outbound request units per public MCP tool call; Reddit's community adapter uses both units for one
+community-discovery query and one complaint query, while GitHub issue and repository searches share a budget.
+When Reddit OAuth must obtain a new access token, that token request also consumes one unit, so the first
+call uses a single Reddit data search rather than exceeding the two-request cap.
+arXiv requests are spaced by at least three seconds process-wide. There are no automatic web-search fallbacks,
+quota-exhaustion retries, or paid-provider substitutions. Across concurrent calls, the shared executor has
 8 workers and a 32-job in-flight cap. Queued work that misses the request deadline is cancelled where possible;
 running work retains its capacity slot until it actually finishes. These are workload guardrails, not per-client
 rate limiting or DDoS protection: public visitors still share the same upstream API quotas and source capacity.
 
-Read coverage before drawing conclusions. `queries_planned` counts all planned jobs (including fallback candidates
-when that phase is triggered), `queries_budgeted` counts jobs admitted under the 16-job request cap, and
-`queries_run` counts jobs that completed. `queries_succeeded` counts successful source responses,
-`queries_timed_out` counts running jobs that missed the deadline, and `queries_cancelled_before_start` counts
-queued jobs cancelled after the deadline. Per-source coverage also reports partial/request-limited work.
+Read coverage before drawing conclusions. `queries_planned` counts planned source jobs; `queries_budgeted`
+counts jobs admitted after the global and per-provider caps, while `provider_request_units_budgeted` estimates
+the outbound requests those jobs can consume. `queries_run` counts completed jobs. `queries_succeeded` counts
+successful source responses; `queries_timed_out` counts running jobs that missed the deadline; and
+`queries_cancelled_before_start` counts queued jobs cancelled after the deadline. Per-source coverage reports
+partial work and work omitted by the request/provider limits.
 
 For niche research and solution checks, explicitly stated requirements such as offline operation, low-resource
 hardware, affordability and platform can exclude candidates that do not demonstrate them. Those candidates may
@@ -76,8 +82,8 @@ Leave `region` empty and the search is worldwide. If the person says "I'm in Ind
 model passes `region="India"` (any country name or code; the person can change it any time). Then the search adds that
 country's own communities and its name to queries, and runs official data only where it applies (UK petitions for the
 UK, NYC 311 and FDA device reports for the US). For other places the result says there is no official-data connector yet
-and relies on community and paper sources plus web search suggestions that include the country. Nothing is guessed on
-the server.
+and relies on community and paper sources plus suggested external search queries that include the country; the server
+does not automatically run a general web search. Nothing is guessed on the server.
 
 ## How a good problem is judged
 
@@ -154,6 +160,27 @@ It is the best source for everyday problems, so add free credentials:
 
 Check Reddit's current API terms before publishing a public server that uses it.
 
+## Additional public sources
+
+GitLab global issue search adds public bug reports and feature discussions from outside GitHub. It requires a
+free personal access token with the narrow `read_api` scope; set it as `GITLAB_TOKEN`. When the token is absent,
+GitLab is excluded from default searches rather than spending budget on a request that cannot work. See
+https://docs.gitlab.com/api/search/ and https://docs.gitlab.com/api/rest/authentication/.
+
+
+Bluesky is searched through its public read-only AppView endpoint and requires no key. It provides a complementary,
+recent social conversation stream, but it is not representative of the whole population and must not be treated as
+verified demand.
+
+arXiv adds open technical preprints and abstracts, particularly useful for AI, computer science, and engineering
+research gaps. No key is required. The adapter enforces arXiv's request-spacing guidance, so concurrent requests
+can queue and research runs can take longer when the source is busy.
+
+Crossref and PubMed/NCBI are possible future additions, but they mostly overlap with the scholarly metadata already
+provided by OpenAlex and Europe PMC. Before adding them, benchmark whether they supply genuinely new abstracts or
+evidence rather than duplicate citations. We should prefer a smaller number of complementary sources to a long list
+of noisy endpoints.
+
 ## Stack Exchange key (free, recommended)
 
 Without a key, Stack Exchange allows about 300 requests a day per IP, and a public server shares one IP, so it hits
@@ -181,5 +208,5 @@ invisible to the built-in sources).
 
 - Posts show complaints, not proven demand. Talk to 5 real people before you commit.
 - Online sources skew English-speaking and online. People without a voice online are under-represented.
-- Free API quotas are small and a hosted server shares one IP. Caching (36h) and the daily job keep usage low.
+- Free API quotas are shared and limited; no public API should be described as unlimited. The server caps provider requests per tool call, avoids automatic retries and fallbacks, and caches successful research for 36 hours. The in-memory/disk cache is not durable shared storage on ephemeral hosts.
 - Check each platform's terms before publishing widely.
