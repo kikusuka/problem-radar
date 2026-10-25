@@ -51,7 +51,10 @@ retrieves public-source leads and does not call a hosted LLM or embedding API.
 To protect the shared free-tier instance, each query/problem is capped at 400 characters; `also` accepts up to
 four related terms of at most 200 characters each; source and Stack Exchange site selectors are bounded and
 deduplicated. One tool call can schedule at most 16 source jobs across all search phases. Default niche research
-reserves up to two of those jobs for a DuckDuckGo fallback when the first pass is thin. Across concurrent calls, the shared executor has
+reserves up to two of those jobs for a web-search fallback when the first pass is thin: Tavily is preferred
+when `TAVILY_API_KEY` is configured; otherwise the fallback is skipped unless you explicitly enable
+DuckDuckGo HTML scraping with `ENABLE_DDG_FALLBACK=1`. These are job limits; one adapter may still
+perform more than one outbound request and must be budgeted separately. Across concurrent calls, the shared executor has
 8 workers and a 32-job in-flight cap. Queued work that misses the request deadline is cancelled where possible;
 running work retains its capacity slot until it actually finishes. These are workload guardrails, not per-client
 rate limiting or DDoS protection: public visitors still share the same upstream API quotas and source capacity.
@@ -154,6 +157,22 @@ It is the best source for everyday problems, so add free credentials:
 
 Check Reddit's current API terms before publishing a public server that uses it.
 
+## Official web-search fallback (recommended)
+
+Tavily is used only when the first source pass is thin and a `TAVILY_API_KEY` is configured. The adapter uses
+basic search, caps results per call, and reports exhausted/rate-limited quota instead of retrying or switching
+to a paid provider. Tavily currently lists 1,000 monthly free API credits with no credit card; credits reset
+monthly and requests stop when the free allowance is exhausted. Do not add billing, buy credits, or upgrade.
+Create a free key at https://app.tavily.com/home and add it to Render as `TAVILY_API_KEY`.
+
+DuckDuckGo HTML scraping is disabled by default because the page is frequently blocked from shared cloud IPs
+and its markup is not a stable API. Set `ENABLE_DDG_FALLBACK=1` only if you deliberately want this best-effort
+fallback when Tavily is not configured. It is not an unlimited or production-reliable replacement.
+
+For OpenAlex, the optional `OPENALEX_API_KEY` raises the free daily request budget; its basic API is free,
+and its free key does not require a payment method. Set `OPENALEX_MAILTO` as well if you want to identify
+polite use. See https://help.openalex.org/api/authentication/.
+
 ## Stack Exchange key (free, recommended)
 
 Without a key, Stack Exchange allows about 300 requests a day per IP, and a public server shares one IP, so it hits
@@ -181,5 +200,5 @@ invisible to the built-in sources).
 
 - Posts show complaints, not proven demand. Talk to 5 real people before you commit.
 - Online sources skew English-speaking and online. People without a voice online are under-represented.
-- Free API quotas are small and a hosted server shares one IP. Caching (36h) and the daily job keep usage low.
+- Free API quotas are shared and limited. Tavily currently offers 1,000 credits/month on its no-card free tier; the web fallback uses basic search and makes no retry after quota errors. API credits stop rather than automatically upgrading. Caching (36h) helps, but the in-memory/disk cache is not durable shared storage on ephemeral hosts.
 - Check each platform's terms before publishing widely.
