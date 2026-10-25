@@ -63,3 +63,15 @@ def test_non_promotional_first_person_technical_complaint_stays_independent():
     )
     assert profile["promotional"] is False
     assert profile["counts"]["pain_point"] >= 1
+
+
+def test_spending_mentions_alone_do_not_establish_pain():
+    assert not pain.looks_like_pain(
+        "I pay $20 per month for a local LLM subscription and use a Mac."
+    )
+
+
+def test_technical_failure_aliases_require_failure_evidence():
+    query = "Android local LLM crashes out of memory"
+    assert not pain.topic_fit(query, "Android local LLM features for offline chat")
+    assert pain.topic_fit(query, "Android local LLM crashes with an OOM error")
