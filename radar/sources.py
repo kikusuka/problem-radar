@@ -1,13 +1,14 @@
 """Source adapters. Every adapter returns a Result so one broken source can't sink a run.
 
-Sources (free tiers; quotas and access policies still apply):
+Sources (free public access or free tiers; quotas and access policies still apply):
   hn         Hacker News / Algolia           no key
   se         Stack Exchange                  optional free STACKEXCHANGE_KEY
   reddit     Reddit                          OAuth credentials recommended; review current API terms
+  bluesky    Bluesky public posts            no key; public API
   github     GitHub issues and repositories  optional GITHUB_TOKEN
   scholar    OpenAlex papers                 optional free OPENALEX_API_KEY
-  tavily     Web search fallback             optional free TAVILY_API_KEY; 1,000 credits/month
-  ddg        DuckDuckGo HTML scraping        opt-in only; brittle and may be blocked
+  arxiv      CS/AI and other preprints       no key; 3-second shared request spacing
+  europepmc  Biomedical papers and preprints no key
   petitions  UK Parliament petitions         no key; UK only
   nyc311     NYC 311 complaints              no key; NYC only
   openFDA    Medical-device event reports    no key; US only
@@ -19,6 +20,8 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from threading import Lock
+import xml.etree.ElementTree as ET
 
 import httpx
 
@@ -215,7 +218,9 @@ def find_subreddits(query: str, want: int = 3) -> tuple[list[str], str]:
 def reddit_community(query: str, limit: int = 30, **_) -> Result:
     """Community-first Reddit: find the subreddits for a topic, then take their top complaints from the last year.
     Much less noise than searching all of Reddit, because everyone in these places already cares about the topic."""
-    subs, err = find_subreddits(query)
+    # One community-discovery call plus at most one community-search call: Reddit gets
+    # a strict two-request budget even when a topic has many candidate communities.
+    subs, err = find_subreddits(query, want=1)
     if err:
         return Result([], False, err)
     out, errs = [], []
@@ -290,108 +295,89 @@ def europepmc(query: str, limit: int = 20, **_) -> Result:
     return Result(out)
 
 
-# ------------------------------------------------- Tavily (official web-search API; optional free-tier key)
-def tavily(query: str, limit: int = 10, **_) -> Result:
-    """Official web search for thin-result fallback. Uses basic depth to conserve free credits.
+# ----------------------------------------------------- Bluesky public search
+def bluesky(query: str, limit: int = 20, **_) -> Result:
+    """Search public Bluesky posts via the official public AppView; no account or API key required."""
+    params = {"q": query, "limit": max(1, min(int(limit), 25)), "sort": "latest"}
+    data, err = _get("https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts", params)
+    if data is None:
+        return Result([], False, err)
 
-    Tavily's free plan currently includes 1,000 credits/month without a credit card.
-    We never upgrade, retry exhausted quotas, or fall back to a paid plan.
-    """
-    api_key = os.environ.get("TAVILY_API_KEY", "").strip()
-    if not api_key:
-        return Result([], True, "skipped (TAVILY_API_KEY is not set)", skipped=True)
-
-    payload = {
-        "api_key": api_key,
-        "query": query,
-        "topic": "general",
-        "search_depth": "basic",
-        "max_results": max(1, min(int(limit), 10)),
-        "include_answer": False,
-        "include_raw_content": False,
-    }
-    try:
-        r = httpx.post(
-            "https://api.tavily.com/search",
-            json=payload,
-            timeout=TIMEOUT,
-            headers={"User-Agent": UA},
-        )
-    except Exception as e:
-        return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
-
-    if r.status_code == 429:
-        return Result([], False, "rate limited or monthly credits exhausted (429); no retry attempted")
-    if r.status_code in (401, 403):
-        return Result([], False, f"Tavily authentication or access rejected ({r.status_code})")
-    if r.status_code == 402:
-        return Result([], False, "Tavily plan or credits unavailable (402); check free-plan quota")
-    if r.status_code >= 400:
-        return Result([], False, f"Tavily HTTP {r.status_code}")
-
-    try:
-        data = r.json()
-    except Exception as e:
-        return Result([], False, f"invalid JSON response: {type(e).__name__}")
-
-    from urllib.parse import urlparse
     out = []
-    for item in (data.get("results") or [])[:payload["max_results"]]:
-        url = (item.get("url") or "").strip()
-        if not url.startswith(("https://", "http://")):
+    for item in data.get("posts", []):
+        record = item.get("record") or {}
+        author = item.get("author") or {}
+        text = _plain(record.get("text") or "")
+        uri = item.get("uri") or ""
+        handle = author.get("handle") or ""
+        rkey = uri.rsplit("/", 1)[-1] if uri else ""
+        url = f"https://bsky.app/profile/{handle}/post/{rkey}" if handle and rkey else ""
+        if not text or not url:
             continue
-        title = _plain(item.get("title") or "")
-        text = _plain(item.get("content") or item.get("raw_content") or "")
-        if not (title or text):
-            continue
-        domain = urlparse(url).hostname or ""
-        published = str(item.get("published_date") or "")[:10]
+        created = str(record.get("createdAt") or item.get("indexedAt") or "")[:10]
         out.append(Post(
-            "tavily", f"tavily-{url}", title, text[:1500], url, domain,
-            0, 0, published, {"site": domain, "search_score": item.get("score")},
+            "bluesky", f"bsky-{uri}", text[:140], text[:1500], url, handle,
+            int(item.get("likeCount") or 0), int(item.get("replyCount") or 0), created,
+            {"site": "bluesky", "reposts": int(item.get("repostCount") or 0)},
         ))
     return Result(out)
 
 
-# ------------------------------------------------- DuckDuckGo (opt-in, best-effort fallback, no key)
-_ddg_cooldown = {"until": 0.0}
-DDG_ENTRY = re.compile(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</a>', re.S)
+# ----------------------------------------------------- arXiv scholarly search
+_ARXIV_LOCK = Lock()
+_arxiv_last_request = 0.0
+_ARXIV_NS = "{http://www.w3.org/2005/Atom}"
 
 
-def _ddg_url(href: str) -> str:
-    """DuckDuckGo wraps links as //duckduckgo.com/l/?uddg=<encoded url>. Unwrap them."""
-    from urllib.parse import parse_qs, unquote, urlparse
-    href = html.unescape(href)
-    if "uddg=" in href:
-        q = parse_qs(urlparse(href if "//" in href else "//" + href).query)
-        if q.get("uddg"):
-            return unquote(q["uddg"][0])
-    return ("https:" + href) if href.startswith("//") else href
-
-
-def ddg(query: str, limit: int = 10, **_) -> Result:
-    """DuckDuckGo HTML results. NO official API exists: this reads a public page, which DuckDuckGo may block or disallow,
-    especially from a shared server IP. It is a last-resort fallback: it backs off for 10 minutes when blocked and
-    never raises. Results are web pages (not complaints), so treat them as leads to verify."""
-    if os.environ.get("DISABLE_DDG") == "1" or os.environ.get("ENABLE_DDG_FALLBACK") != "1":
-        return Result([], True, "disabled (set ENABLE_DDG_FALLBACK=1 to opt in)", skipped=True)
-    if time.time() < _ddg_cooldown["until"]:
-        return Result([], False, "blocked or rate limited; cooling down")
+def arxiv(query: str, limit: int = 20, **_) -> Result:
+    """Search arXiv abstracts. One request per query, globally spaced by at least 3 seconds."""
+    global _arxiv_last_request
+    params = {
+        "search_query": f"all:{re.sub(r'[^A-Za-z0-9 ._\-]', ' ', query)[:180].strip()}",
+        "start": 0,
+        "max_results": max(1, min(int(limit), 20)),
+        "sortBy": "relevance",
+        "sortOrder": "descending",
+    }
     try:
-        r = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, timeout=TIMEOUT,
-                       headers={"User-Agent": "Mozilla/5.0 (compatible; problem-radar/0.2)"})
+        with _ARXIV_LOCK:
+            wait = 3.0 - (time.monotonic() - _arxiv_last_request)
+            if _arxiv_last_request and wait > 0:
+                time.sleep(wait)
+            try:
+                response = httpx.get(
+                    "https://export.arxiv.org/api/query",
+                    params=params,
+                    timeout=TIMEOUT,
+                    headers={"User-Agent": UA},
+                )
+            finally:
+                _arxiv_last_request = time.monotonic()
     except Exception as e:
         return Result([], False, f"{type(e).__name__}: {str(e)[:80]}")
-    if r.status_code in (202, 403, 429) or "anomaly" in r.text[:3000].lower():
-        _ddg_cooldown["until"] = time.time() + 600
-        return Result([], False, f"blocked or rate limited ({r.status_code})")
-    if r.status_code != 200:
-        return Result([], False, f"HTTP {r.status_code}")
+
+    if response.status_code == 429:
+        return Result([], False, "rate limited (429); arXiv requests are spaced at least 3 seconds; no retry attempted")
+    if response.status_code >= 400:
+        return Result([], False, f"arXiv HTTP {response.status_code}")
+    try:
+        root = ET.fromstring(response.text)
+    except ET.ParseError as e:
+        return Result([], False, f"invalid arXiv Atom feed: {type(e).__name__}")
+
     out = []
-    for href, title, snippet in DDG_ENTRY.findall(r.text)[:limit]:
-        url = _ddg_url(href)
-        domain = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
-        out.append(Post("ddg", f"ddg-{url}", re.sub(r"\s+", " ", _plain(title)), re.sub(r"\s+", " ", _plain(snippet)), url, domain, 0, 0, "", {"site": domain}))
+    for entry in root.findall(f"{_ARXIV_NS}entry"):
+        get_text = lambda tag: " ".join((entry.findtext(f"{_ARXIV_NS}{tag}") or "").split())
+        paper_id = get_text("id").replace("http://arxiv.org/abs/", "https://arxiv.org/abs/")
+        title, abstract = get_text("title"), get_text("summary")
+        if not paper_id or not title:
+            continue
+        author_el = entry.find(f"{_ARXIV_NS}author/{_ARXIV_NS}name")
+        author = " ".join((author_el.text or "").split()) if author_el is not None else ""
+        out.append(Post(
+            "arxiv", f"arxiv-{paper_id.rsplit('/', 1)[-1]}", _plain(title), _plain(abstract)[:1500],
+            paper_id, author, 0, 0, get_text("published")[:10], {"site": "arxiv"},
+        ))
     return Result(out)
 
 
@@ -528,7 +514,7 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
-SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "fda_devices": fda_devices, "europepmc": europepmc, "tavily": tavily, "ddg": ddg, "github": github,
+SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "bluesky": bluesky, "fda_devices": fda_devices, "europepmc": europepmc, "arxiv": arxiv, "github": github,
            "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
 
 
@@ -543,8 +529,8 @@ def enabled() -> dict:
         "hn": {"enabled": True, "note": "no key needed"},
         "se": {"enabled": True, "note": "key optional" + (" (key set)" if os.environ.get("STACKEXCHANGE_KEY") else "; free quota is small")},
         "reddit": {"enabled": True, "note": reddit_mode},
-        "tavily": {"enabled": bool(os.environ.get("TAVILY_API_KEY", "").strip()), "note": ("official basic web search; free tier currently 1,000 credits/month; no retry on quota errors" if os.environ.get("TAVILY_API_KEY", "").strip() else "optional official web fallback; set TAVILY_API_KEY (free tier currently 1,000 credits/month, no card required)")},
-        "ddg": {"enabled": os.environ.get("ENABLE_DDG_FALLBACK") == "1" and os.environ.get("DISABLE_DDG") != "1", "note": "HTML scraping fallback, disabled by default; set ENABLE_DDG_FALLBACK=1 to opt in; can be blocked or changed upstream"},
+        "bluesky": {"enabled": True, "note": "public post search; no API key; request budget capped per provider"},
+        "arxiv": {"enabled": True, "note": "scholarly preprint search; no API key; enforces at least 3 seconds between requests"},
         "europepmc": {"enabled": True, "note": "Europe PMC papers and preprints (biomedical, health, some social science); no key"},
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},
