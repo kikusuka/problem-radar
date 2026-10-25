@@ -333,7 +333,8 @@ def arxiv(query: str, limit: int = 20, **_) -> Result:
     """Search arXiv abstracts. One request per query, globally spaced by at least 3 seconds."""
     global _arxiv_last_request
     params = {
-        "search_query": f"all:{re.sub(r'[^A-Za-z0-9 ._\-]', ' ', query)[:180].strip()}",
+    safe_query = re.sub("[^A-Za-z0-9 ._-]", " ", query)[:180].strip()
+        "search_query": f"all:{safe_query}",
         "start": 0,
         "max_results": max(1, min(int(limit), 20)),
         "sortBy": "relevance",
