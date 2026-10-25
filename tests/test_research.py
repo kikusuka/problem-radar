@@ -580,6 +580,29 @@ def test_gitlab_requires_token_and_maps_public_issue(monkeypatch):
     assert result.posts[0].url.endswith("/-/issues/42")
 
 
+def test_reddit_oauth_handshake_counts_against_the_two_request_budget(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "client")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+    monkeypatch.setitem(S._reddit_token, "value", "")
+    monkeypatch.setitem(S._reddit_token, "exp", 0.0)
+    jobs = [
+        research.Job("reddit_community", "elder care"),
+        research.Job("reddit", "elder care"),
+    ]
+
+    selected = research._limit_jobs(jobs)
+    assert [job.source for job in selected] == ["reddit"]
+    assert S.startup_request_cost("reddit") + sum(
+        research.SOURCE_REQUEST_COST.get(job.source, 1) for job in selected
+    ) == 2
+
+    monkeypatch.setitem(S._reddit_token, "value", "cached-token")
+    monkeypatch.setitem(S._reddit_token, "exp", time.time() + 1800)
+    selected = research._limit_jobs(jobs)
+    assert [job.source for job in selected] == ["reddit_community"]
+    assert sum(research.SOURCE_REQUEST_COST.get(job.source, 1) for job in selected) == 2
+
+
 def test_gitlab_is_excluded_from_default_search_without_token(monkeypatch):
     monkeypatch.delenv("GITLAB_TOKEN", raising=False)
     assert "gitlab" not in {job.source for job in research.plan("offline android assistant", lens="software")}
