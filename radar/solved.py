@@ -13,7 +13,7 @@ import re
 import time
 
 from . import sources as S
-from .pain import constraints_match, missing_constraints, query_variants, relevance
+from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_fit
 from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
 SOLUTION_RE = re.compile(
@@ -133,13 +133,24 @@ def check(problem: str, lens: str = "software") -> dict:
     key = variants[0]
     projects, discussion, papers, actions = [], [], [], []
     constraint_mismatch_count = 0
+    constraint_near_misses: list[tuple[float, dict]] = []
     for p in _dedupe(raw):
         text = _body(p)
         rel = max((relevance(variant, text) for variant in variants), default=0.0)
-        if rel < 0.5:
+        # Loose token overlap is only a prefilter. Require subject anchors too, so
+        # generic words like "running", "local", or "project" cannot pass as relevance.
+        if rel < 0.5 or not topic_fit(problem, text, p.title):
             continue
         if not constraints_match(problem, text):
             constraint_mismatch_count += 1
+            constraint_near_misses.append((rel, {
+                "title": p.title[:140],
+                "url": p.url,
+                "source": p.source,
+                "snippet": (p.text or p.title)[:260],
+                "missing_constraints": missing_constraints(problem, text),
+                "relevance": round(rel, 2),
+            }))
             continue
         if p.source == "github_repo":
             projects.append(_project(p))
@@ -155,6 +166,7 @@ def check(problem: str, lens: str = "software") -> dict:
     discussion.sort(key=lambda x: x["score"], reverse=True)
     sources_ok = sum(1 for s in status.values() if s.get("state") in ("ok", "partial"))
     assessment = assess(projects, papers, actions, lens, discussion, len(raw), sources_ok)
+    constraint_near_misses.sort(key=lambda item: item[0], reverse=True)
     if not (projects or papers or actions or discussion) and constraint_mismatch_count and assessment["hint"] == "no_clear_solution_found":
         assessment["hint"] = "inconclusive_constraints_not_matched"
         assessment["reasons"] = [f"{constraint_mismatch_count} related candidate(s) did not demonstrate all explicit constraints."]
@@ -165,6 +177,7 @@ def check(problem: str, lens: str = "software") -> dict:
         "searched_as": variants,
         "required_constraints": missing_constraints(problem, ""),
         "constraint_candidates_excluded": constraint_mismatch_count,
+        "constraint_near_misses": [item for _, item in constraint_near_misses[:5]],
         "coverage": status,
         "assessment": assessment,
         "existing_projects": projects[:8],
