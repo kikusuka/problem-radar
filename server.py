@@ -159,8 +159,11 @@ def hackathon_ideas(theme: str, lens: str = "software", limit: int = 25, depth: 
 @mcp.tool()
 def source_status() -> dict:
     """Show which sources are active and which optional keys are missing, so you know the search coverage."""
-    return {"sources": sources.enabled(),
-            "personal_tools": "on" if os.environ.get("ENABLE_PERSONAL") == "1" else "off (set ENABLE_PERSONAL=1 locally)"}
+    return {
+        "sources": sources.enabled(),
+        "request_limiter": sources.request_limiter_status(),
+        "personal_tools": "on" if os.environ.get("ENABLE_PERSONAL") == "1" else "off (set ENABLE_PERSONAL=1 locally)",
+    }
 
 
 if os.environ.get("ENABLE_PERSONAL") == "1":  # local use only; on a hosted server these files are shared by everyone
