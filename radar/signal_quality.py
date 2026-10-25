@@ -146,9 +146,10 @@ _FAILURE_CONTEXT = re.compile(
     r"hangs?\s+(?:when|after|on|during|because|with|at)|hung\s+(?:when|after|on|during)|"
     r"out[-\s]?of[-\s]?(?:memory|ram)|oom|memory leak|not enough ram|"
     r"failed to allocate|fatal exception|stack trace|steps to reproduce|"
-    r"(?:my|our|this|the app|the application|the model|the runtime|the device|the process|it)\b.{0,45}"
-    r"\b(?:crashes|crashed|crashing|freezes|freezing|hangs|hung|fails to load|doesn't work|does not work)|"
-    r"(?:crash|freez|hang|fail(?:ure)? to load)\w*\s+(?:bug|issue|report|problem))\b",
+    r"(?:my|our|the app|the application|the model|the runtime|the device|the process|"
+    r"it|tasker|app|application|model|runtime|device|process)\s+(?:keeps?\s+)?"
+    r"(?:crashes|crashed|crashing|freezes|freezing|hangs|hung|fails? to load|doesn't work|does not work)|"
+    r"(?:causes?|causing|results? in|leads? to)\b.{0,40}\b(?:lag|freez|crash|hang|out[-\s]?of[-\s]?memory|oom)\w*)\b",
     re.IGNORECASE,
 )
 _TUTORIAL_TITLE = re.compile(
@@ -238,14 +239,14 @@ def signal_profile(text: str, max_matches: int = 8) -> dict:
     # wedges"). Classify the artifact being presented before its feature/problem terms.
     elif _SOLUTION_TITLE.search(text) or _SOLUTION_INTRO.search(text):
         evidence_kind = "solution_showcase"
+    elif _HELP_REQUEST.search(text):
+        evidence_kind = "help_request"
     elif _FAILURE_CONTEXT.search(text):
         evidence_kind = "technical_failure_report"
     elif explicit_pain:
         evidence_kind = "reported_complaint"
     elif _WORKAROUND_CONTEXT.search(text):
         evidence_kind = "workaround_or_manual_process"
-    elif _HELP_REQUEST.search(text):
-        evidence_kind = "help_request"
     elif _PRODUCT_COMPARISON.search(text):
         evidence_kind = "product_comparison"
     else:
