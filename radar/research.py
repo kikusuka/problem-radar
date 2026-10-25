@@ -504,7 +504,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     depth = "deep" if depth == "deep" else "quick"
     lens = lens if lens in LENSES else "any"
     goal = goal if goal in GOALS else "general"
-    limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 25, 60)
+    limit = max(5, min(limit if isinstance(limit, int) and not isinstance(limit, bool) else 25, 60))
     also = [t.strip() for t in (also or []) if isinstance(t, str) and t.strip()][:4]
     if any(len(term) > 200 for term in also):
         raise ValueError("each related term must be at most 200 characters")
