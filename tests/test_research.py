@@ -1146,6 +1146,11 @@ def test_solution_search_finds_topical_projects_as_constraint_near_misses(monkey
 
     assert out["solution_search_queries"][0].lower().startswith("android")
     assert any("local llm" in q.lower() for q in out["solution_search_queries"])
+    assert any(
+        "android" in q.lower() and "low-end" in q.lower()
+        and ("offline" in q.lower() or "without internet" in q.lower())
+        for q in out["solution_search_queries"]
+    ), "the four-query solution search must reserve a constraint-rich query"
     assert out["existing_projects"] == []
     assert any(
         item["url"] == candidate.url
