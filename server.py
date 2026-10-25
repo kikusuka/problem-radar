@@ -94,8 +94,9 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     also: up to four synonyms/related terms (e.g. ["wheelchair", "prosthetic"] for "assistive devices"). Do not use
     synonyms that contradict or drop explicit hard requirements from the niche. Both variants preserve known constraints
     such as offline operation, low-resource hardware, affordability, and platform. Results that do not demonstrate those
-    requirements appear as near_misses with missing_constraints rather than top_posts. Review those fields before asking
-    to broaden a search.
+    requirements appear as near_misses with missing_constraints rather than top_posts. If a related pain report fails a hard
+    requirement, supporting_evidence keeps it separately labelled with missing_constraints; it is not counted as a qualifying result.
+    Review those fields before asking to broaden a search.
 
     lens picks where and how to search: software (tools, automation), hardware (devices, DIY, products),
     policy (rules, services, civic fixes; includes UK petition signature counts and NYC 311 complaint counts),
@@ -111,11 +112,13 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     because that adapter consumes both Reddit request units and can displace direct complaint retrieval.
     The planner uses short constraint-preserving queries first, then supplied synonyms before generic modifiers; relevance
     uses stricter topic-anchor coverage and hard-constraint checks. Promotional launches are surfaced as product leads
-    in near_misses rather than ranked as independent pain evidence. Cross-source duplicate titles are collapsed. There is no automatic
-    general web-search fallback or paid-provider substitution. The public request budget admits at most 16 source jobs
-    and at most two outbound request units per upstream provider; authentication handshakes count where relevant.
-    Check queries_planned, queries_budgeted, provider_request_units_budgeted, queries_run, queries_succeeded,
-    queries_timed_out, queries_cancelled_before_start, and each source's coverage flags. se_sites: Stack Exchange sites.
+    in near_misses rather than ranked as independent pain evidence. Cross-source duplicate titles are collapsed. There is no automatic general web-search fallback or paid-provider substitution. The actual HTTP layer enforces a per-tool-call cap
+    of two outbound requests per upstream provider (including OAuth handshakes), plus a process-local per-provider/minute guard.
+    Repeated identical calls are coalesced; successful research is cached for 36h and empty/limited results only briefly. These
+    caches/rate limits are process-local, not shared between Render instances, and do not survive restarts.
+    Check queries_planned, queries_budgeted, provider_request_units_budgeted, provider_request_units_used, provider_request_counts,
+    provider_request_denials, queries_run, queries_succeeded, queries_timed_out, queries_cancelled_before_start, and each source's
+    coverage flags. se_sites: Stack Exchange sites.se_sites: Stack Exchange sites.
     Cached 36h; refresh=True re-runs.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
@@ -130,9 +133,11 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
     Built-in sources only: there is no automatic general web-search fallback. Results require topical and pain/workaround
     evidence; product-launch announcements and spending-only mentions are not treated as independent complaints.
     Query constraints are surfaced in each result's missing_constraints field rather than silently discarding every
-    related complaint that omits a constraint. Query length is capped and source/site lists are bounded; per-provider
-    request limits may omit planned work. Check coverage and treat results as leads.
-    """
+    related complaint that omits a constraint. Query length is capped and source/site lists are bounded; the actual HTTP layer
+    enforces a per-tool-call budget of two outbound requests per upstream provider plus a process-local per-minute guard.
+    Identical concurrent searches are coalesced; empty/limited results are cached briefly. Check queries_planned, queries_budgeted,
+    provider_request_units_used, provider_request_counts, provider_request_denials, coverage, and treat results as leads.
+        """
     return research.search(query, sources, limit, subreddit, se_sites)
 
 
@@ -145,8 +150,10 @@ def validate_problem(problem: str, niche: str = "", lens: str = "software") -> d
     the search found no qualifying evidence, not that no solution or demand exists; limited_evidence means coverage
     or evidence volume is thin; evidence_found_needs_validation means public leads were found but do not validate demand.
     paying_signals are relevant spending/price mentions; willingness_to_pay_signals require explicit positive intent to pay;
-    workaround_signals must refer to the target problem. Follow the validation guide and talk to real users.
-    """
+    workaround_signals must refer to the target problem. scheduled_queries names the evidence intent of each admitted query;
+    provider_request_units_used/counts/denials expose actual HTTP budget use. Repeated identical checks are cached briefly.
+    Follow the validation guide and talk to real users.
+        """
     return research.validate(problem, niche, lens)
 
 
