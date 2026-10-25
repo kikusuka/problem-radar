@@ -240,7 +240,7 @@ def relevance(niche: str, text: str, loose: bool = False) -> float:
     """Share of the niche's content words found in the text (prefix match so 'invoices' matches 'invoice')."""
     words = content_words(niche)
     if not words:
-        return 1.0
+        return 0.0
     frac = sum(1 for w in words if _has_word(w, text, loose)) / len(words)
     if not loose and frac >= 1.0 and 2 <= len(words) <= 3 and not _near(words, text):
         return 0.5  # every word is present but scattered across the text, so it is not about this topic
@@ -251,6 +251,6 @@ def is_relevant(niche: str, text: str) -> bool:
     """Short topics need every word; longer ones need about 60%."""
     n = len(content_words(niche))
     if n == 0:
-        return True
+        return False
     need = 1.0 if n <= 3 else 0.6
     return relevance(niche, text) >= need - 1e-9
