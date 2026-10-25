@@ -189,7 +189,7 @@ def query_variants(problem: str) -> list[str]:
         r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]cost\b|\blow[- ]spec\b"
         r"|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\baffordable\b|\bprivacy[- ]first\b",
         r"\bandroid\b|\bios\b|\biphone\b|\bipad\b|\bwindows\b|\blinux\b|\bmacos\b|\bchromeos\b",
-        r"\bopen[- ]source\b|\bno[- ]cost\b|\bfree\b|\bprivate\b|\bprivacy\b|\blocal\b",
+        r"\bopen[- ]source\b|\bno[- ]cost\b|\bfree\b|\bprivate\b|\bprivacy\b|\blocal (?:ai|model|llm|inference|execution|processing)\b|\bruns? locally\b|\bfully local\b",
     )
     required = set()
     for pattern in preserve_patterns:
@@ -248,7 +248,7 @@ _CONSTRAINT_GROUPS = (
     ),
     (
         "on-device/local execution",
-        re.compile(r"\bon[- ]device\b|\blocal\b", re.I),
+        re.compile(r"\bon[- ]device\b|\b(?:local (?:ai|model|llm|inference|execution|processing)|runs? locally|fully local)\b", re.I),
         re.compile(r"\bon[- ]device\b|\bon device\b|\bfully local\b|\blocal (?:ai|model|llm|inference)\b|\bruns? locally\b|\bair[- ]gapped\b", re.I),
     ),
     (
