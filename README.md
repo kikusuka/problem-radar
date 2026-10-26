@@ -85,6 +85,8 @@ Complaint results and solution leads are different kinds of evidence. Results ma
 
 `search_diagnostics` distinguishes qualifying results, related candidates only, limited coverage, source failures, and completed searches with no qualifying evidence. An empty result is never proof that a problem does not exist.
 
+The solution checker keeps a strict set of candidates that demonstrate the full topic and stated constraints. It also returns `related_candidates` when a project, paper or discussion matches enough key topic anchors to deserve inspection but does not demonstrate every part of the request. `missing_topic_anchors` and `missing_constraints` explain the gap. Related candidates do not count as confirmed existing solutions or automatically change the verdict to “partially solved”.
+
 `evidence_summary` reports the count of qualifying posts, distinct source types, and non-empty source/author-handle pairs. Handles are not identity-verified, cross-posts may exist, and public posts are not a representative survey. Cross-source results are a corroboration clue—not market validation or proof of prevalence.
 
 ## Worldwide by default, local when asked

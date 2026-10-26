@@ -54,9 +54,12 @@ def check_if_solved(problem: str, lens: str = "software") -> dict:
     The research lens adds arXiv preprints. It gives a hint with reasons and a guide to finding the gap the best existing
     solution leaves open. Absence of results is never proof that nobody solved it. If required_constraints are present, candidates must demonstrate those constraints;
     constraint_candidates_excluded counts related candidates that did not; constraint_near_misses shows up to five topical
-    candidates with the requirements they failed to demonstrate. Generic word overlap is not enough to qualify a candidate.
-    "inconclusive_constraints_not_matched" means the search did not demonstrate the requested requirements, not that no solution exists.
-    lens: software, hardware, policy, research or any.
+    candidates that match the topic but do not demonstrate every hard constraint. related_candidates separately shows
+    partial topic matches with missing_topic_anchors, even when the candidate uses a neighboring term such as "LLM runner"
+    instead of "assistant". Those are inspection leads only: they do not count as existing solutions or make the verdict
+    "partially solved". Generic word overlap is not enough to qualify a lead.
+    "inconclusive_constraints_not_matched" or "inconclusive_related_candidates" means the search did not establish a full fit,
+    not that no solution exists. lens: software, hardware, policy, research or any.
     """
     return solved.check(problem, lens)
 
