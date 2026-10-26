@@ -194,7 +194,7 @@ def test_source_query_rotation_spreads_alternates_under_existing_caps(monkeypatc
         by_source.setdefault(job.source, []).append(job.query)
 
     assert len(selected) <= research.MAX_JOBS_PER_REQUEST
-    assert all(len(qs) <= research.MAX_REQUESTS_PER_PROVIDER_PER_CALL for source, qs in by_source.items()
+    assert all(len(qs) <= research.provider_budget(research.SOURCE_PROVIDER_GROUP.get(source, source)) for source, qs in by_source.items()
                if source not in {"reddit_community"})
     # The same exact broad alternate should not consume every source's second slot.
     alternates = [qs[1] for source, qs in by_source.items() if len(qs) > 1]
@@ -213,6 +213,7 @@ def test_direct_search_rotates_alternate_queries_per_source(monkeypatch):
         return search
 
     monkeypatch.setattr(S, "startup_request_cost", lambda provider: 0)
+    monkeypatch.setenv("GITHUB_TOKEN", "t")  # with a token GitHub's budget allows alternates
     for name in calls:
         monkeypatch.setitem(S.SOURCES, name, fake(name))
     result = research.search(query, sources=["reddit", "github", "hn"], limit=5)

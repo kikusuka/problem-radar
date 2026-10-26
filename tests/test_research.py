@@ -46,15 +46,15 @@ def fakes(monkeypatch, tmp_path):
 def test_coverage_reports_every_source_state():
     out = research.research("accounting invoices", force=True)
     cov = out["coverage"]
-    assert cov["hn"]["state"] == "partial"
+    assert cov["hn"]["state"] == "ok"
+    # Keyless Stack Exchange has a tiny daily quota, so its budget is small and the result says "partial" honestly.
     assert cov["se"]["state"] == "partial"
-    # Direct Reddit search has priority; the two-request community adapter is opt-in.
     assert cov["reddit"]["state"] == "failed"
-    assert "reddit_community" not in cov
+    assert "reddit_community" in cov  # planned by default; reported even when the keyless budget leaves no room
     assert "bluesky" not in cov  # disabled from default research until the 403 is resolved
     assert "ddg" not in cov and "tavily" not in cov
-    assert out["provider_request_units_budgeted"] <= (
-        len(S.SOURCES) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
+    assert out["provider_request_units_budgeted"] <= sum(
+        research.provider_budget(p) for p in {research.SOURCE_PROVIDER_GROUP.get(s, s) for s in S.SOURCES}
     )
 
 
@@ -580,7 +580,8 @@ def test_gitlab_requires_token_and_maps_public_issue(monkeypatch):
     assert result.posts[0].url.endswith("/-/issues/42")
 
 
-def test_reddit_oauth_handshake_counts_against_the_two_request_budget(monkeypatch):
+def test_reddit_oauth_handshake_counts_against_a_tight_request_budget(monkeypatch):
+    monkeypatch.setattr(research, "provider_budget", lambda provider: 2)  # the cap logic still works when a budget is tight
     monkeypatch.setenv("REDDIT_CLIENT_ID", "client")
     monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
     monkeypatch.setitem(S._reddit_token, "value", "")
@@ -1031,12 +1032,12 @@ def test_research_obeys_provider_and_global_request_budgets_without_fallback(mon
     for source, _ in calls:
         provider = research.SOURCE_PROVIDER_GROUP.get(source, source)
         provider_units[provider] = provider_units.get(provider, 0) + research.SOURCE_REQUEST_COST.get(source, 1)
-    assert all(units <= research.MAX_REQUESTS_PER_PROVIDER_PER_CALL for units in provider_units.values())
+    assert all(units <= research.provider_budget(provider) for provider, units in provider_units.items())
     assert out["queries_planned"] > out["queries_budgeted"]
     assert out["queries_budgeted"] <= research.MAX_JOBS_PER_REQUEST
-    assert out["provider_request_units_budgeted"] <= (
-        len(research.SOURCE_PROVIDER_GROUP) + len(S.SOURCES)
-    ) * research.MAX_REQUESTS_PER_PROVIDER_PER_CALL
+    assert out["provider_request_units_budgeted"] <= sum(
+        research.provider_budget(p) for p in {research.SOURCE_PROVIDER_GROUP.get(s, s) for s in S.SOURCES}
+    ) + 1
     assert out["queries_run"] <= research.MAX_JOBS_PER_REQUEST
     assert "fallback_note" not in out
     assert "ddg" not in out["coverage"] and "tavily" not in out["coverage"]
@@ -1072,11 +1073,11 @@ def test_related_paper_alone_does_not_mean_partially_solved():
     assert any("do not by themselves demonstrate a working solution" in reason for reason in assessment["reasons"])
 
 
-def test_default_research_prefers_direct_reddit_and_community_is_opt_in():
+def test_default_research_runs_direct_reddit_and_community_reddit():
     niche = "offline AI assistant for low-end Android phones"
     jobs = research.plan(niche, "quick", lens="software")
     assert "reddit" in {j.source for j in jobs}
-    assert "reddit_community" not in {j.source for j in jobs}
+    assert "reddit_community" in {j.source for j in jobs}
 
     explicit = research.plan(niche, "quick", sources=["reddit_community"])
     community = [j for j in explicit if j.source == "reddit_community"]
@@ -1102,7 +1103,23 @@ def test_default_planner_skips_bluesky_and_prioritizes_alternate_queries(monkeyp
     assert "bluesky" in {j.source for j in research.plan("offline LLM", "quick", sources=["bluesky"])}
 
 
+def test_reddit_oauth_handshake_and_community_fit_the_default_reddit_budget(monkeypatch):
+    monkeypatch.setenv("REDDIT_CLIENT_ID", "client")
+    monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
+    monkeypatch.setitem(S._reddit_token, "value", "")
+    monkeypatch.setitem(S._reddit_token, "exp", 0.0)
+    assert research.provider_budget("reddit") == 6
+    jobs = research.plan("elder care", "quick", lens="policy", region={"name": "India", "code": "IN", "subreddits": ["india", "IndianStudents"]})
+    selected = research._limit_jobs(jobs)
+    reddit_jobs = [j for j in selected if research.SOURCE_PROVIDER_GROUP.get(j.source, j.source) == "reddit"]
+    assert "reddit_community" in {j.source for j in reddit_jobs}                      # community-first search runs by default
+    assert {"india", "IndianStudents"} <= {j.opts.get("subreddit") for j in reddit_jobs}  # and so do the region's own communities
+    units = S.startup_request_cost("reddit") + sum(research.SOURCE_REQUEST_COST.get(j.source, 1) for j in reddit_jobs)
+    assert units <= research.provider_budget("reddit")
+
+
 def test_reddit_community_adapter_is_skipped_when_oauth_cold_start_exceeds_cap(monkeypatch):
+    monkeypatch.setattr(research, "provider_budget", lambda provider: 2)
     monkeypatch.setattr(S, "startup_request_cost", lambda provider: 1 if provider == "reddit" else 0)
     jobs = research.plan("offline LLM", "quick", lens="software")
     assert "reddit_community" not in {j.source for j in jobs}

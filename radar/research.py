@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import time
 from collections import Counter
@@ -24,6 +25,7 @@ from . import sources as S
 from .cluster import clean, cluster_posts, keywords
 from .pain import (constraints_match, gap_cues, HACK_WORDS, missing_constraints, MODIFIERS, MONEY_WORDS, PHRASE_SETS, heat, is_dev_niche, is_focused, is_relevant, looks_like_pain, query_variants, relevance,
                    signals, topic_fit, topic_anchor_gaps, topic_candidate_fit, query_expansions)
+from .ratelimit import limiter
 from .signal_quality import signal_profile
 
 DATA = Path(__file__).resolve().parent.parent / "data"
@@ -32,16 +34,41 @@ CACHE_TTL = 36 * 3600
 CACHE_SCHEMA_VERSION = 6  # bounded query expansion and evidence classification changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
-MAX_JOBS_PER_REQUEST = 16  # total scheduled source-job budget for one public MCP tool call
-MAX_REQUESTS_PER_PROVIDER_PER_CALL = 2  # actual outbound HTTP-request units per upstream provider
+MAX_JOBS_PER_REQUEST = 32  # total scheduled source-job budget for one public MCP tool call
+MAX_REQUESTS_PER_PROVIDER_PER_CALL = 2  # default request units per provider that has no entry in provider_budget()
 SOURCE_PROVIDER_GROUP = {
     "reddit": "reddit",
     "reddit_community": "reddit",
     "github": "github",
     "github_repo": "github",
 }
+def provider_budget(provider: str) -> int:
+    """Request units one tool call may spend on a provider.
+
+    Sized to each provider's real allowance (see radar/ratelimit.py), so a call can ask several different questions.
+    Providers with a small keyless quota get little unless a free key is configured. The shared rate limiter, not this
+    number, is what protects the providers when many people use the server at once.
+    """
+    has = lambda name: bool(os.environ.get(name))  # noqa: E731
+    table = {
+        "hn": 6,
+        "reddit": 6 if has("REDDIT_CLIENT_ID") and has("REDDIT_CLIENT_SECRET") else 2,
+        "se": 4 if has("STACKEXCHANGE_KEY") else 2,
+        "github": 3 if has("GITHUB_TOKEN") else 1,
+        "gitlab": 2,
+        "europepmc": 3,
+        "scholar": 3,
+        "arxiv": 1,
+        "fda_devices": 3,
+        "petitions": 1,
+        "nyc311": 1,
+        "bluesky": 1,
+    }
+    return table.get(provider, MAX_REQUESTS_PER_PROVIDER_PER_CALL)
+
+
 SOURCE_REQUEST_COST = {"reddit_community": 2}  # one subreddit lookup plus one community search
-SOURCE_JOB_LIMIT = {"arxiv": 1}  # strict global rate policy makes a second same-call query wasteful
+SOURCE_JOB_LIMIT = {"arxiv": 1}  # strict global rate policy makes a second same-call query wasteful (others: provider_budget)
 
 MAX_QUERY_LIST_ITEMS = 12
 MAX_QUERY_LIST_ITEM_CHARS = 100
@@ -87,12 +114,12 @@ SE_TOPIC = {
 }
 
 LENSES = {
-    "software": {"sources": ["reddit", "hn", "se", "gitlab"], "se": None},
-    "any": {"sources": ["reddit", "hn", "se", "gitlab"], "se": None},
-    "hardware": {"sources": ["reddit", "fda_devices", "se", "hn"],
+    "software": {"sources": ["reddit", "reddit_community", "hn", "se", "gitlab"], "se": None},
+    "any": {"sources": ["reddit", "reddit_community", "hn", "se", "gitlab"], "se": None},
+    "hardware": {"sources": ["reddit", "reddit_community", "fda_devices", "se", "hn"],
                  "se": ["electronics", "diy", "3dprinting", "robotics", "hardwarerecs"]},
-    "policy": {"sources": ["petitions", "nyc311", "reddit", "hn", "se"], "se": ["politics", "law", "economics"]},
-    "research": {"sources": ["scholar", "arxiv", "europepmc", "se", "hn", "reddit"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
+    "policy": {"sources": ["petitions", "nyc311", "reddit", "reddit_community", "hn", "se"], "se": ["politics", "law", "economics"]},
+    "research": {"sources": ["scholar", "arxiv", "europepmc", "se", "hn", "reddit", "reddit_community"], "se": ["academia", "biology", "physics", "chemistry", "cs"]},
 }
 GOALS = ("general", "hackathon", "hobby", "portfolio", "impact", "class_project", "capstone", "research", "science_fair")
 
@@ -184,9 +211,9 @@ def _limit_jobs(jobs: list[Job], limit: int = MAX_JOBS_PER_REQUEST) -> list[Job]
             used = requests_by_provider.get(provider)
             if used is None:
                 used = S.startup_request_cost(provider)
-            if used + cost > MAX_REQUESTS_PER_PROVIDER_PER_CALL:
+            if used + cost > provider_budget(provider):
                 continue
-            if jobs_by_provider.get(provider, 0) >= SOURCE_JOB_LIMIT.get(provider, MAX_REQUESTS_PER_PROVIDER_PER_CALL):
+            if jobs_by_provider.get(provider, 0) >= SOURCE_JOB_LIMIT.get(provider, provider_budget(provider)):
                 continue
             selected.append(pending.pop(0))
             requests_by_provider[provider] = used + cost
@@ -229,7 +256,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
         # a predictable budget skip; regular Reddit search can still use the budget.
         if "reddit_community" in names and (
             S.startup_request_cost("reddit") + SOURCE_REQUEST_COST.get("reddit_community", 1)
-            > MAX_REQUESTS_PER_PROVIDER_PER_CALL
+            > provider_budget("reddit")
         ):
             names.remove("reddit_community")
     extra = [t.strip() for t in (also or [])[:4] if t.strip()]  # analyst-supplied alternate wording
@@ -278,7 +305,9 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
             jobs += [Job(name, f'{niche} "{ph}"', {}, per) for ph in phrases]
     if region:  # bias toward the place: its own communities, and its name in the query
         if "reddit" in names:
-            jobs += [Job("reddit", q, {"subreddit": sub}, per) for sub in region["subreddits"][:2] for q in dict.fromkeys([niche] + extra[:1])]
+            regional = [Job("reddit", niche, {"subreddit": sub}, per) for sub in region["subreddits"][:2]]
+            first = next((i for i, j in enumerate(jobs) if j.source == "reddit"), len(jobs))
+            jobs[first + 1:first + 1] = regional  # right after the first plain Reddit search, so budgets keep them
         if "hn" in names:
             jobs.append(Job("hn", f"{niche} {region['name']}", {}, per))
     return jobs
@@ -286,7 +315,7 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
 
 def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post], dict]:
     status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "cancelled_before_start": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
-                         "capacity_limited": False, "request_limited": False} for j in jobs}
+                         "capacity_limited": False, "request_limited": False, "rate_limited": False} for j in jobs}
     for j in jobs:
         status[j.source]["jobs"] += 1
     posts: list[S.Post] = []
@@ -301,6 +330,11 @@ def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post]
             status[j.source]["errors"].append("per-request source-job budget reached")
     for j in selected_jobs:
         st = status[j.source]
+        provider = SOURCE_PROVIDER_GROUP.get(j.source, j.source)
+        if not limiter.take(provider, SOURCE_REQUEST_COST.get(j.source, 1)):
+            st["rate_limited"] = True  # the shared allowance for this provider is used up; cached answers still work
+            st["errors"].append(f"shared rate limit for {provider} reached; try again shortly or use a cached niche")
+            continue
         if not _SOURCE_SLOTS.acquire(blocking=False):
             st["capacity_limited"] = True
             st["errors"].append("global source-job capacity reached")
@@ -350,9 +384,10 @@ def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post]
                 status[j.source]["errors"].append("timed out")
     for source, st in status.items():
         st["errors"] = sorted(set(st["errors"]))[:3]
-        if (st["skipped"] and not st["ok"]) or ((st["capacity_limited"] or st["request_limited"]) and not submitted_by_source[source]):
+        throttled = st["capacity_limited"] or st["request_limited"] or st["rate_limited"]
+        if (st["skipped"] and not st["ok"]) or (throttled and not submitted_by_source[source]):
             st["state"] = "skipped"
-        elif st["ok"] == st["jobs"] and not st["capacity_limited"] and not st["request_limited"]:
+        elif st["ok"] == st["jobs"] and not throttled:
             st["state"] = "ok"
         elif st["ok"]:
             st["state"] = "partial"

@@ -1,4 +1,4 @@
-"""Problem Radar MCP server (v4).
+"""Problem Radar MCP server (v5).
 
 Local (stdio, for Claude Desktop / Claude Code):   python server.py
 Hosted (HTTP, for Render / Northflank / etc.):     TRANSPORT=streamable-http python server.py
@@ -11,6 +11,9 @@ from __future__ import annotations
 import os
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+from starlette.requests import Request
+from starlette.responses import JSONResponse, PlainTextResponse
 
 from radar import hunt, research, solved, sources, store
 
@@ -21,7 +24,33 @@ mcp = FastMCP(
 )
 
 
-@mcp.tool()
+PRIVACY = (
+    "Problem Radar privacy: the server keeps no accounts and stores no personal data. Search terms you send are used to query "
+    "public sources (Hacker News, Reddit, Stack Exchange, GitHub, GitLab, arXiv, OpenAlex, Europe PMC, openFDA and public "
+    "government datasets) and results may be cached on the server for up to 36 hours. Usernames of post authors are never returned."
+)
+TERMS = (
+    "Problem Radar terms: free, read-only research aid provided as is, without warranty. Results are public posts and records; "
+    "check them yourself before relying on them. Do not use it to target or harass individuals."
+)
+
+
+@mcp.custom_route("/healthz", methods=["GET"])
+async def healthz(request: Request) -> JSONResponse:
+    return JSONResponse({"ok": True, "service": "problem-radar"})
+
+
+@mcp.custom_route("/privacy", methods=["GET"])
+async def privacy(request: Request) -> PlainTextResponse:
+    return PlainTextResponse(PRIVACY)
+
+
+@mcp.custom_route("/terms", methods=["GET"])
+async def terms(request: Request) -> PlainTextResponse:
+    return PlainTextResponse(TERMS)
+
+
+@mcp.tool(title="Plan a problem hunt", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def plan_hunt(goal: str = "general", interests: list[str] | None = None, skills: list[str] | None = None,
               hours: str = "", budget: str = "", lens: str = "any", location: str = "") -> dict:
     """START HERE when the person is unsure what to search. Turns their situation into a research plan.
@@ -33,7 +62,7 @@ def plan_hunt(goal: str = "general", interests: list[str] | None = None, skills:
     return hunt.plan_hunt(goal, interests, skills, hours, budget, lens, location)
 
 
-@mcp.tool()
+@mcp.tool(title="Student problem hunt", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "class_project", weeks: float = 8,
                  team_size: int = 1, interests: list[str] | None = None, resources: str = "", location: str = "") -> dict:
     """START HERE for students: finds a project that fits your level, field, time and goal.
@@ -46,7 +75,7 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
     return hunt.student_hunt(level, field, goal, weeks, team_size, interests, resources, location)
 
 
-@mcp.tool()
+@mcp.tool(title="Check if a problem is already solved", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def check_if_solved(problem: str, lens: str = "software") -> dict:
     """Is this problem already solved? Checks existing projects, products, papers and public actions before you commit.
 
@@ -64,7 +93,7 @@ def check_if_solved(problem: str, lens: str = "software") -> dict:
     return solved.check(problem, lens)
 
 
-@mcp.tool()
+@mcp.tool(title="Find research gaps", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def find_research_gaps(topic: str, depth: str = "quick", limit: int = 25, refresh: bool = False) -> dict:
     """For theses, papers and science projects: finds recent papers that call something open, understudied or future work.
 
@@ -74,7 +103,7 @@ def find_research_gaps(topic: str, depth: str = "quick", limit: int = 25, refres
     return research.research(topic, depth, limit, force=refresh, lens="research", goal="research")
 
 
-@mcp.tool()
+@mcp.tool(title="Explore problem domains", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def explore_domains(interest: str = "") -> dict:
     """Seed ideas for people with no starting point: life and work domains with concrete niches to research.
 
@@ -83,7 +112,7 @@ def explore_domains(interest: str = "") -> dict:
     return hunt.explore_domains(interest)
 
 
-@mcp.tool()
+@mcp.tool(title="Research a niche for real problems", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: str = "quick", limit: int = 25,
                    refresh: bool = False, sources: list[str] | None = None, se_sites: list[str] | None = None,
                    also: list[str] | None = None, region: str = "") -> dict:
@@ -124,7 +153,7 @@ def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: 
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 
 
-@mcp.tool()
+@mcp.tool(title="Search complaints and pain points", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, subreddit: str | None = None,
                 se_sites: list[str] | None = None) -> dict:
     """Search for complaints with your own wording, e.g. 'pedestrian crossing near school' or 'quickbooks invoice export'.
@@ -139,7 +168,7 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
     return research.search(query, sources, limit, subreddit, se_sites)
 
 
-@mcp.tool()
+@mcp.tool(title="Validate a problem", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def validate_problem(problem: str, niche: str = "", lens: str = "software") -> dict:
     """Check a candidate problem before building or campaigning: existing solutions, willingness-to-pay signals and workarounds.
 
@@ -153,13 +182,13 @@ def validate_problem(problem: str, niche: str = "", lens: str = "software") -> d
     return research.validate(problem, niche, lens)
 
 
-@mcp.tool()
+@mcp.tool(title="Hackathon problem ideas", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def hackathon_ideas(theme: str, lens: str = "software", limit: int = 25, depth: str = "quick", region: str = "") -> dict:
     """Ground a hackathon theme in real complaints. Same as research_niche with goal=hackathon. region: country, or empty for worldwide."""
     return research.research(theme, depth, limit, lens=lens, goal="hackathon", region=region)
 
 
-@mcp.tool()
+@mcp.tool(title="Source status and coverage", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def source_status() -> dict:
     """Show which sources are active and which optional keys are missing, so you know the search coverage."""
     return {"sources": sources.enabled(),

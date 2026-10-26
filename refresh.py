@@ -4,11 +4,13 @@ server answers instantly from fresh results.
     python refresh.py                  # quick research for every niche in niches.txt
     python refresh.py deep "accounting"   # deep research for one niche
 """
+import os
 import sys
 
 from radar import research
 
 if __name__ == "__main__":
+    os.environ.setdefault("RADAR_RATE_WAIT", "25")  # offline job waits for rate-limit tokens instead of skipping
     args = sys.argv[1:]
     depth = "quick"
     if args and args[0] in ("quick", "deep"):
