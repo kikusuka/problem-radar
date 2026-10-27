@@ -23,7 +23,9 @@ something someone everyone currently different better best good great new old ma
 study studies data results result methods method conducted review analysis background objective objectives purpose paper papers
 research findings approach proposed show shows shown present presents however although within across among between several
 different various main including related recent current novel significant effect effects based role overall aim aims
-introduction conclusion conclusions participants""".split()
+introduction conclusion conclusions participants
+them take only because her his him now other say said see years year after before while through though
+own such each both few another often always never ever whole part lot kind sort home life day days thing""".split()
 )
 TOKEN = re.compile(r"[a-z][a-z0-9\-\+#\.]{2,}")
 TAGS = re.compile(r"<[^>]+>")

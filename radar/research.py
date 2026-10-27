@@ -31,7 +31,7 @@ from .signal_quality import signal_profile
 DATA = Path(__file__).resolve().parent.parent / "data"
 RESEARCH_DIR = DATA / "research"
 CACHE_TTL = 36 * 3600
-CACHE_SCHEMA_VERSION = 6  # bounded query expansion and evidence classification changed
+CACHE_SCHEMA_VERSION = 7  # bounded query expansion and evidence classification changed
 DEADLINE = 40  # seconds for one fan-out; slow sources are reported, not waited for
 MAX_QUERY_CHARS = 400
 MAX_JOBS_PER_REQUEST = 32  # total scheduled source-job budget for one public MCP tool call
@@ -539,6 +539,89 @@ def _search_diagnostics(qualifying_count: int, near_miss_count: int, coverage: d
     }
 
 
+CANDIDATE_LIMIT = 50
+CANDIDATE_SNIPPET = 220
+
+
+def _candidates(posts: list[S.Post], terms: list[str], limit: int = CANDIDATE_LIMIT) -> list[tuple[float, S.Post, str]]:
+    """A wide, lightly filtered pool for the chat LLM to judge. The server only drops what is clearly off-topic:
+    the topic must appear in the title or the opening of the text (a passing mention deep in a thread does not count).
+    Structured data and papers are always kept. Relevance and 'is this a real problem' are the LLM's call."""
+    topic_terms = [t for t in terms if t and t.strip()]
+    pool = []
+    for p in _dedupe(posts):
+        text = _body(p)
+        early = clean(f"{p.title} {(p.text or '')[:400]}")
+        title_hit = any(relevance(t, p.title, loose=True) > 0 for t in topic_terms)
+        early_hit = title_hit or any(relevance(t, early, loose=True) > 0 for t in topic_terms)
+        if not (early_hit or p.source in STRUCTURED or p.source in PAPERS or p.source in WEB):
+            continue
+        profile = signal_profile(text)
+        score = (3 * title_hit + 2 * early_hit + heat(text, p.score, p.comments) + min(1.5, profile["weighted_score"])
+                 + (1.5 if profile["evidence_kind"] in {"reported_complaint", "help_request"} else 0)
+                 + (0.5 if profile["evidence_kind"] == "general_discussion" else 0)
+                 - (3 if profile["promotional"] else 0))
+        pool.append((score, p, "title" if title_hit else "opening"))
+    pool.sort(key=lambda x: x[0], reverse=True)
+    pool = _diversify(pool, limit)  # no source fills more than ~40%
+    return pool[:limit]
+
+
+def _candidate_view(i: int, p: S.Post, where: str) -> dict:
+    profile = signal_profile(_body(p))
+    src = p.source + (f"/{p.meta['site']}" if p.meta.get("site") and p.source not in STRUCTURED else "")
+    out = {"id": f"c{i}", "title": p.title[:140], "snippet": clean(p.text or p.title)[:CANDIDATE_SNIPPET],
+           "url": p.url, "source": src, "date": p.created, "score": p.score, "comments": p.comments,
+           "topic_in": where, "kind": profile["evidence_kind"]}
+    if profile["promotional"]:
+        out["promotional"] = True
+    return out
+
+
+EVIDENCE_LAYER = {"hn": "people_complaining", "reddit": "people_complaining", "reddit_community": "people_complaining", "se": "people_complaining",
+                  "bluesky": "people_complaining", "github": "builders_working_on_it", "gitlab": "builders_working_on_it",
+                  "petitions": "official_data", "nyc311": "official_data", "fda_devices": "official_data",
+                  "scholar": "research_interest", "arxiv": "research_interest", "europepmc": "research_interest"}
+
+
+def _trend(years: list[str]) -> str:
+    """Is the problem still being talked about? Based only on the post dates in the cluster."""
+    ys = [int(y) for y in years if y.isdigit()]
+    if len(ys) < 3:
+        return "unknown"
+    now = time.gmtime().tm_year
+    recent = sum(1 for y in ys if y >= now - 2)
+    if recent == 0:
+        return "older_only"
+    return "recent" if recent * 2 >= len(ys) else "ongoing"
+
+
+def _problem_clusters(cands: list[tuple[float, S.Post, str]], niche: str, n: int = 8) -> list[dict]:
+    """Group candidates that talk about the same thing and say how many separate voices and sources stand behind each.
+    Counts are clues, not proof: handles are not identity-checked and public posts are not a survey."""
+    index = {p.id: i for i, (_, p, _) in enumerate(cands, 1)}
+    dicts = [{"id": p.id, "title": p.title, "text": p.text, "author": p.author, "url": p.url, "source": p.source,
+              "score": p.score, "comments": p.comments, "created": p.created} for _, p, _ in cands]
+    out = []
+    for g in cluster_posts(dicts, niche):
+        if len(g) < 2:
+            continue
+        voices = len({x["author"] for x in g if x["author"]}) or len(g)
+        sources = {x["source"] for x in g}
+        years = sorted(x["created"][:4] for x in g if x.get("created"))
+        layers = sorted({layer for s_ in sources for layer in [EVIDENCE_LAYER.get(s_.split("/")[0])] if layer})
+        # confidence needs independent voices AND more than one kind of evidence, so one loud thread cannot look solid
+        conf = "high" if voices >= 3 and len(layers) >= 2 else "medium" if voices >= 3 or len(layers) >= 2 else "low"
+        asks = sum(1 for x in g if signal_profile(clean(f"{x['title']} {x['text']}"))["evidence_kind"] == "help_request")
+        lead = max(g, key=lambda x: x["score"] + 2 * x["comments"])
+        out.append({"label": lead["title"][:100], "voices": voices, "sources": sorted(sources), "evidence_layers": layers,
+                    "asking_for_a_solution": asks, "trend": _trend(years), "years": [years[0], years[-1]] if years else [],
+                    "confidence": conf, "candidate_ids": [f"c{index[x['id']]}" for x in g[:8]]})
+    out.sort(key=lambda c: ({"high": 2, "medium": 1, "low": 0}[c["confidence"]], c["voices"]), reverse=True)
+    return out[:n]
+
+
+
 def themes(posts: list[S.Post], niche: str, n: int = 12) -> list[dict]:
     """Terms and word pairs that recur across distinct posts (document frequency)."""
     skip = keywords(niche)
@@ -577,7 +660,10 @@ FIT_RUBRIC = {
 }
 
 BASE_GUIDE = (
-    "You are the analyst. The posts below are raw, unverified complaints. "
+    "You are the analyst. `candidates` is a wide, lightly filtered pool of raw, unverified public posts: judge relevance yourself, "
+    "drop anything that is not really about the topic, and use `problem_clusters` (candidate ids, voices, sources, confidence) as grouping hints. "
+    "`kind` tells you what a post is (a complaint, a help request, general discussion, a product showcase); venting is context, a repeated concrete pain is a problem. "
+    "`top_posts` is the stricter keyword-filtered subset. "
     "1) Group them by the underlying problem (meaning, not shared words) and discard off-topic or already-solved ones. "
     "2) For each problem write: one-line statement; who has it; what they do about it today; what it costs them; "
     "3-6 evidence URLs from below; confidence (High: 3+ independent voices across 2+ sources, or official counts; "
@@ -786,6 +872,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
     ranked = _diversify(ranked, limit)
+    cands = _candidates(raw, [niche] + also)
     payload = {
         "niche": niche,
         "lens": lens,
@@ -807,8 +894,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "constraint_note": ("Explicit constraints are required for top-post eligibility; near misses identify constraints they do not demonstrate." if missing_constraints(niche, "") else "No supported hard constraint was detected in the query (offline/local execution, low-resource hardware, affordability, or platform)."),
         "coverage": status,
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
+        "candidates": [_candidate_view(i, p, w) for i, (_, p, w) in enumerate(cands, 1)],
+        "problem_clusters": _problem_clusters(cands, niche),
         "recurring_themes": themes(kept, niche),
-        "suggested_groups": suggested_groups(kept, niche),
         "evidence_summary": _evidence_summary(kept),
         "search_diagnostics": _search_diagnostics(
             len(kept), len(misses), status,

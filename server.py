@@ -116,39 +116,24 @@ def explore_domains(interest: str = "") -> dict:
 def research_niche(niche: str, lens: str = "any", goal: str = "general", depth: str = "quick", limit: int = 25,
                    refresh: bool = False, sources: list[str] | None = None, se_sites: list[str] | None = None,
                    also: list[str] | None = None, region: str = "") -> dict:
-    """Research a niche for real, recurring problems.
+    """Research a niche for real, recurring problems. Returns a wide pool of public-source leads for YOU to judge.
 
-    region: leave empty for worldwide (the default). If the person mentions a place ("I'm in India", "UK problems"), pass it
-    as a country name or code, e.g. "India", "UK", "Nigeria". That adds the country's own communities and its name to
-    searches, and uses official data where it exists (UK petitions, US NYC 311 and FDA). Other places have community and
-    paper coverage only, and the result says so. You decide; the person can change it any time.
+    Read `candidates` (up to 50 short, lightly filtered posts: id, title, snippet, url, source, date, kind) and decide
+    yourself which are really about the topic and which describe a concrete, repeated problem. `problem_clusters` groups
+    candidates by shared theme with voices, sources, years and a confidence label; treat them as hints. `top_posts` is a
+    stricter keyword-filtered subset. Counts are clues, not proof: results are public posts, not a survey, and a missing
+    result is not evidence that a problem does not exist. Check `coverage` before interpreting thin results.
 
-    also: up to four synonyms/related terms (e.g. ["wheelchair", "prosthetic"] for "assistive devices"). Do not use
-    synonyms that contradict or drop explicit hard requirements from the niche. Both variants preserve known constraints
-    such as offline operation, low-resource hardware, affordability, and platform. Results that do not demonstrate those
-    requirements appear as near_misses with missing_constraints rather than top_posts. Review those fields before asking
-    to broaden a search.
-
-    lens picks where and how to search: software (tools, automation), hardware (devices, DIY, products),
-    policy (rules, services, civic fixes; includes UK petition signature counts and NYC 311 complaint counts),
-    research (recent papers calling something open or understudied), or any (default; the analyst decides the fix type).
-    goal tunes the guidance: hackathon, hobby, portfolio, impact, class_project, capstone, research, science_fair.
-    Returns ranked public-source leads, not verified facts. Inspect URLs and snippets; use the analysis_guide to
-    separate reports, products, papers and official data. Check coverage before interpreting thin results. A missing
-    result is not evidence that the problem does not exist. depth: quick (default) or deep. Sources include Hacker News,
-    Stack Exchange, Reddit, optional GitLab public issues (requires GITLAB_TOKEN), GitHub issues for developer niches,
-    OpenAlex and Europe PMC papers, arXiv preprints for research, and applicable official civic data. Bluesky is excluded
-    from default queries until its live HTTP 403 is resolved, but can be explicitly selected for diagnostics.
-    Default lens plans prioritize direct Reddit search. Reddit community discovery is opt-in via sources=["reddit_community"]
-    because that adapter consumes both Reddit request units and can displace direct complaint retrieval.
-    The planner uses short constraint-preserving queries first, then supplied synonyms before generic modifiers; relevance
-    uses stricter topic-anchor coverage and hard-constraint checks. Promotional launches are surfaced as product leads
-    in near_misses rather than ranked as independent pain evidence. Cross-source duplicate titles are collapsed. There is no automatic
-    general web-search fallback or paid-provider substitution. The public request budget admits at most 16 source jobs
-    and at most two outbound request units per upstream provider; authentication handshakes count where relevant.
-    Check queries_planned, queries_budgeted, provider_request_units_budgeted, queries_run, queries_succeeded,
-    queries_timed_out, queries_cancelled_before_start, and each source's coverage flags. se_sites: Stack Exchange sites.
-    Cached 36h; refresh=True re-runs.
+    region: leave empty for worldwide. If the person mentions a place ("I'm in India", "UK problems"), pass a country name
+    or code. That adds the country's communities and name to the searches and uses official data where it exists (UK
+    petitions, NYC 311, US FDA reports). Other places have community and paper coverage only, and the result says so. For
+    non-English or local wording, pass local terms in `also`.
+    also: up to four synonyms or related terms. Never drop hard requirements from the niche (offline, low-resource,
+    affordable, platform); results missing them appear as near_misses.
+    lens: software, hardware, policy, research, or any (default). goal: hackathon, hobby, portfolio, impact, class_project,
+    capstone, research, science_fair. depth: quick or deep. se_sites: Stack Exchange sites. sources: override the default
+    sources. Cached 36h; refresh=True re-runs. Searches are budgeted per provider and rate-limited across all users; the
+    coverage block says when a source was partial or rate_limited.
     """
     return research.research(niche, depth, limit, sources, se_sites, force=refresh, lens=lens, goal=goal, also=also, region=region)
 

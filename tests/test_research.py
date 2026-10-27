@@ -71,7 +71,8 @@ def test_themes_and_groups_are_hints_not_gates():
     out = research.research("quickbooks invoices", force=True)
     terms = {t["term"] for t in out["recurring_themes"]}
     assert terms & {"spreadsheet", "reconciliation", "copy paste"}
-    assert out["suggested_groups"] and out["suggested_groups"][0]["size"] >= 2
+    assert out["problem_clusters"] and out["problem_clusters"][0]["voices"] >= 2
+    assert out["problem_clusters"][0]["candidate_ids"]
 
 
 def test_cache_is_used_second_time_and_empty_results_are_not_cached(monkeypatch):
@@ -1276,3 +1277,32 @@ def test_search_pain_filters_promotions_and_money_only_posts(monkeypatch):
     assert [p["url"] for p in out["results"]] == ["https://example.com/oom"]
     assert "offline operation" in out["results"][0]["missing_constraints"]
     assert "missing_constraints" in out["results"][0]
+
+
+def test_candidates_are_wide_but_drop_passing_mentions(monkeypatch):
+    deep = "x " * 250 + "my elderly mother needs elder care and it is a struggle"
+    posts = [
+        P("hn", 1, "Carbon emissions law in California", deep, "a1"),
+        P("hn", 2, "Elder care costs are unfair and nobody explains the options", "My father needs elder care and the fees are unfair, I am struggling to compare homes.", "a2"),
+        P("hn", 3, "Elder care waiting lists are broken", "Elder care waiting lists take a year, this is a frustrating problem for families.", "a3"),
+        P("hn", 4, "Elder care homes: no way to compare prices", "Comparing elder care prices is a real problem, I wish there was a tool.", "a4"),
+    ]
+    monkeypatch.setitem(S.SOURCES, "hn", lambda q, limit=20, **k: S.Result(list(posts)))
+    out = research.research("elder care", force=True)
+    titles = [c["title"] for c in out["candidates"]]
+    assert "Carbon emissions law in California" not in titles          # passing mention deep in the text
+    assert len(out["candidates"]) >= 3 and len(out["candidates"]) <= research.CANDIDATE_LIMIT
+    assert all({"id", "title", "snippet", "url", "source", "kind", "topic_in"} <= set(c) for c in out["candidates"])
+    ids = {c["id"] for c in out["candidates"]}
+    for cl in out["problem_clusters"]:
+        assert set(cl["candidate_ids"]) <= ids and cl["confidence"] in {"low", "medium", "high"}
+    assert all("author" not in c for c in out["candidates"])           # handles stay hidden
+
+
+def test_cluster_trend_and_layers():
+    assert research._trend(["2019", "2020"]) == "unknown"
+    assert research._trend(["2016", "2017", "2018"]) == "older_only"
+    this = time.gmtime().tm_year
+    assert research._trend([str(this), str(this - 1), "2015"]) == "recent"
+    assert research._trend([str(this), "2015", "2016"]) == "ongoing"
+    assert research.EVIDENCE_LAYER["fda_devices"] == "official_data" and research.EVIDENCE_LAYER["arxiv"] == "research_interest"
