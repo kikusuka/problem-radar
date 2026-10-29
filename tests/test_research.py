@@ -1478,3 +1478,11 @@ def test_crossposted_story_counts_as_one_voice():
              S.Post("reddit", "b", "Elon Musk kicked estranged daughter off health insurance", "health insurance daughter Musk kicked story", "u2", "bob", 1, 1, "2025-01-02", {})]
     out = research._problem_clusters([(1.0, p, "title") for p in posts], "insurance")
     assert all(c["voices"] <= 1 for c in out)
+
+
+def test_job_ads_are_not_evidence():
+    ad = S.Post("reddit", "j1", "Remote Job - Zurich Insurance - Crop Claims Specialist - IL", "crop claims specialist insurance remote",
+                "https://reddit.com/r/jobhuntify/j1", "bot", 1, 0, "2026-01-01", {"subreddit": "jobhuntify"})
+    real = S.Post("reddit", "r1", "Crop insurance claim denied after hail, what now", "my crop insurance claim was denied after hail",
+                  "https://reddit.com/r/farming/r1", "farmer", 5, 4, "2026-01-01", {"subreddit": "farming"})
+    assert [p.id for p in research._dedupe([ad, real])] == ["r1"]

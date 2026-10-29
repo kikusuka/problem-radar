@@ -43,3 +43,20 @@ common or how severe a problem is. Every field below follows from that rule.
 The strict ranking requires the topic's words together and a complaint signal. The wide `candidates` pool requires the topic's words
 together in the title or opening text, so one shared word ("price", "mandi", "care") is not enough. Both are checked against a labelled
 set built from reported failures (`tests/test_relevance_golden.py`): add a row whenever a live search returns something wrong.
+
+## The protocol (how a host model should work with this server)
+Orient (student_hunt / plan_hunt, whats_happening, find_known_problems) -> Discover (research_niche) -> Dig (read_thread, search_pain,
+communities) -> Test (check_if_solved, validate_problem) -> Deliver (a brief in the shape of `radar://brief`, then check_brief).
+The server never scores a problem and never writes the brief. `check_brief` is deterministic: it checks that required fields exist,
+that cited links were really returned, that cited text supports the claim, and that public posts are not labelled DOCUMENTED.
+`ok` means complete and consistent, not true.
+
+## Current-problems feed (`whats_happening`, `radar://pulse`)
+A scheduled job (`python refresh.py pulse`) saves `data/pulse.json` daily from recent Ask HN questions and the most-signed open UK
+petitions. If the file is missing or older than 3 days, the server builds a live copy and says so. Reddit is excluded because its
+content may not be stored. The feed is a small sample that leans toward developers and the UK; it never claims to be a census.
+
+## Published-problem library (`find_known_problems`)
+Hand-sourced lists of problems organisers asked students to solve (SIH 2025, NASA Space Apps 2025). Each entry names the event, year and
+link, and the output says plainly that an organiser's wish is not evidence of demand or that the problem is unsolved or still open.
+Provenance for each list is in `radar/library.py`; scan typos in the SIH list were corrected by hand.

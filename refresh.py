@@ -12,6 +12,11 @@ from radar import research
 if __name__ == "__main__":
     os.environ.setdefault("RADAR_RATE_WAIT", "25")  # offline job waits for rate-limit tokens instead of skipping
     args = sys.argv[1:]
+    if args and args[0] == "pulse":
+        from radar import pulse
+        d = pulse.save()
+        print({k: v["state"] for k, v in d["sources"].items()}, len(d["items"]), "items")
+        sys.exit(0)
     depth = "quick"
     if args and args[0] in ("quick", "deep"):
         depth, args = args[0], args[1:]

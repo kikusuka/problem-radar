@@ -1,0 +1,100 @@
+SIH25001|Smart Community Health Monitoring and Early Warning System for Water-Borne Diseases in Rural Northeast India|MoDoNER|MedTech/BioTech/HealthTech|software
+SIH25002|Smart Tourist Safety Monitoring & Incident Response System using AI, Geo-Fencing, and Blockchain-based Digital ID|MoDoNER|Travel & Tourism|software
+SIH25003|Low-Cost smart transportation solution for Agri produce from remote farms to nearest motorable road in NER Region|MoDoNER|Transportation & Logistics|hardware
+SIH25004|Image based breed recognition for cattle and buffaloes of India|MoFAHD|Agri/FoodTech/Rural|software
+SIH25005|Image based Animal Type Classification for cattle and buffaloes|MoFAHD|Agri/FoodTech/Rural|software
+SIH25006|Development of a Digital Farm Management Portal for Implementing Biosecurity Measures in Pig and Poultry Farms|MoFAHD|Agri/FoodTech/Rural|software
+SIH25007|Development of a Digital Farm Management Portal for Monitoring Maximum Residue Limits (MRL) and Antimicrobial Usage (AMU) in Livestock|MoFAHD|Agri/FoodTech/Rural|software
+SIH25008|Disaster Preparedness and Response Education System for Schools and Colleges|GoPb|Disaster Management|software
+SIH25009|Gamified Environmental Education Platform for Schools and Colleges|GoPb|Smart Education|software
+SIH25010|Smart Crop Advisory System for Small and Marginal Farmers|GoPb|Agri/FoodTech/Rural|software
+SIH25011|Smart Curriculum Activity & Attendance App|GoPb|Smart Education|software
+SIH25012|Automated Attendance System for Rural Schools|GoPb|Smart Education|software
+SIH25013|Real-Time Public Transport Tracking for Small Cities|GoPb|Transportation & Logistics|software
+SIH25014|Waste Segregation Monitoring System for Urban Local Bodies|GoPb|Clean & Green Technology|hardware
+SIH25015|Intelligent Pesticide Sprinkling System Determined by the Infection Level of a Plant|GoPb|Agri/FoodTech/Rural|hardware
+SIH25016|Automated Student Attendance Monitoring and Analytics System for Colleges|GoPb|Smart Education|software
+SIH25017|Digital Platform for Centralized Alumni Data Management and Engagement|GoPb|Smart Education|software
+SIH25018|Telemedicine Access for Rural Healthcare in Nabha|GoPb|MedTech/BioTech/HealthTech|software
+SIH25019|Digital Learning Platform for Rural School Students in Nabha|GoPb|Smart Education|software
+SIH25020|Development of indigenous contactless Integrated Track Monitoring Systems (ITMS) for Track Recording on Indian Railways|MoR|Smart Automation|hardware
+SIH25021|AI based development of Laser based QR Code marking on track fittings on Indian Railways|MoR|Transportation & Logistics|hardware
+SIH25022|Maximizing Section Throughput Using AI-Powered Precise Train Traffic Control|MoR|Transportation & Logistics|software
+SIH25023|AyurSutra- Panchakarma Patient Management and therapy scheduling|MoAyush|MedTech/BioTech/HealthTech|software
+SIH25024|Comprehensive Cloud-Based Practice Management & Nutrient Analysis Software for Ayurvedic Dietitians, Tailored for Ayurveda-Focused Diet Plans|MoAyush|MedTech/BioTech/HealthTech|software
+SIH25025|E tongue for Dravya identification|MoAyush|MedTech/BioTech/HealthTech|hardware
+SIH25026|Develop API code to integrate NAMASTE and or the International Classification of Diseases (ICD-11) via the Traditional Medicine Module 2 (TM2)|MoAyush|MedTech/BioTech/HealthTech|software
+SIH25027|Develop a blockchain-based system for botanical traceability of Ayurvedic herbs, including geo-tagging from the point of collection|MoAyush|Blockchain & Cybersecurity|software
+SIH25028|Smart Classroom & Timetable Scheduler|GoJH|Smart Education|software
+SIH25029|Authenticity Validator for Academia|GoJH|Smart Education|software
+SIH25030|AI-Based Crop Recommendation for Farmers|GoJH|Agri/FoodTech/Rural|software
+SIH25031|Crowdsourced Civic Issue Reporting and Resolution System|GoJH|Clean & Green Technology|software
+SIH25032|Development of a Smart Digital Platform to Promote Eco & Cultural Tourism in Jharkhand|GoJH|Travel & Tourism|software
+SIH25033|AI-Based Smart Allocation Engine for PM Internship Scheme|MCA|Smart Automation|software
+SIH25034|AI-Based Internship Recommendation Engine for PM Internship Scheme|MCA|Smart Education|software
+SIH25035|Sentiment analysis of comments received through E-consultation module|MCA|Miscellaneous|software
+SIH25036|Development of Sensor for Detection Of Microplastics|MoES|Miscellaneous|hardware
+SIH25037|Development of a low-cost camera-based automated beach sand grain size mapping system|MoES|Miscellaneous|hardware
+SIH25038|Blockchain-Based Blue Carbon Registry and MRV System|MoES|Clean & Green Technology|software
+SIH25039|Integrated Platform for Crowdsourced Ocean Hazard Reporting and Social Media Analytics|MoES|Disaster Management|software
+SIH25040|FloatChat - AI-Powered Conversational Interface for ARGO Ocean Data Discovery and Visualization|MoES|Miscellaneous|software
+SIH25041|AI-Driven Unified Data Platform for Oceanographic, Fisheries, and Molecular Biodiversity Insights|MoES|Renewable/Sustainable Energy|software
+SIH25042|Identifying Taxonomy and Assessing Biodiversity from eDNA Datasets|MoES|Miscellaneous|software
+SIH25043|Embedded Intelligent Microscopy System for Identification and Counting of Microscopic Marine Organisms|MoES|Smart Automation|hardware
+SIH25044|AI-Powered Crop Yield Prediction and Optimization|GoOD|Agri/FoodTech/Rural|software
+SIH25045|Blockchain-Based Supply Chain Transparency for Agricultural Produce|GoOD|Agri/FoodTech/Rural|software
+SIH25046|Smart Waste Segregation and Recycling System|GoOD|Clean & Green Technology|hardware
+SIH25047|Disaster Response Drone for Remote Areas|GoOD|Robotics and Drones|hardware
+SIH25048|Gamified Learning Platform for Rural Education|GoOD|Smart Education|software
+SIH25049|AI-Driven Public Health Chatbot for Disease Awareness|GoOD|MedTech/BioTech/HealthTech|software
+SIH25050|Smart Traffic Management System for Urban Congestion|GoOD|Transportation & Logistics|software
+SIH25051|Renewable Energy Monitoring System for Microgrids|GoOD|Renewable/Sustainable Energy|hardware
+SIH25052|AR-Based Cultural Heritage Preservation Platform|GoOD|Heritage & Culture|software
+SIH25053|Improved Onion storage technology for enhancing shelf life of onions|MoCA,F&PD|Agri/FoodTech/Rural|hardware
+SIH25054|Automated High-Current Short-Circuit Test System for MCB to comply with IEC 60898-1:2015|MoCA,F&PD|Smart Automation|hardware
+SIH25055|Automated Specimen Preparation System for testing of Cable samples as per IS 10810 and IS 7098.|MoCA,F&PD|Miscellaneous|hardware
+SIH25056|To explore new/alternative assaying methods to the fire assay method for testing of gold jewellery and artefacts through non-destructive testing|MoCA,F&PD|Miscellaneous|hardware
+SIH25057|Automated Compliance Checker for Legal Metrology Declarations on E-Commerce Platforms|MoCA,F&PD|Miscellaneous|hardware
+SIH25058|Detection and Prevention of Tampering in Weighing and Measuring instruments|MoCA,F&PD|Miscellaneous|hardware
+SIH25059|Enhancing Student Awareness on difference between Aadhaar linked and Direct Beneficiary Transfer(DBT) enabled Aadhaar seeded bank account.|MoSJE|Miscellaneous|software
+SIH25060|Real life solutions for Waste Management.|MoSJE|Clean & Green Technology|software
+SIH25061|Digitize and Showcase Monasteries of Sikkim for Tourism and Cultural Preservation|GoSK|Travel & Tourism|software
+SIH25062|Implementation of Smart Agriculture for Efficient Cultivation in Hilly Regions|GoSK|Agri/FoodTech/Rural|hardware
+SIH25063|Developing a cost effective solution for detecting the breakage of Low Voltage AC Distribution Over Head conductors|GoKL|Disaster Management|hardware
+SIH25064|Improving the Renewable Energy hosting capacity in Distribution Feeders improving the Power quality of Distribution network during high RE injection|GoKL|Renewable/Sustainable Energy|hardware
+SIH25065|Designing and development of an application for on spot assessment of Roof Top Rain water harvesting and artificial recharge potential|MoJS|Smart Automation|software
+SIH25066|Development of an AI-driven ChatBOT for INGRES as a virtual assistant|MoJS|Smart Automation|software
+SIH25067|Proposal for Design and development of application for Heavy Metal Pollution indices|MoJS|Miscellaneous|software
+SIH25068|Real time Groundwater resource evaluation using DWLR data|MoJS|Miscellaneous|software
+SIH25069|AI-Driven Life Cycle Assessment (LCA) Tool for Advancing Circularity and Sustainability in Metallurgy and Mining|MoM|Miscellaneous|software
+SIH25070|Secure Data Wiping for Trustworthy IT Asset Recycling|MoM|Miscellaneous|software
+SIH25071|AI-Based Rockfall Prediction and Alert System for Open-Pit Mines|MoM|Disaster Management|software
+SIH25072|Design and Implementation of Solar-Powered Dewatering in Mining Operations.|MoM|Renewable/Sustainable Energy|hardware
+SIH25073|AI-Powered Mobile Platform for Democratizing Sports Talent Assessment|MYAS|Fitness & Sports|software
+SIH25074|AI-Powered Personal Farming Assistant for Kerala Farmers|GoKL|Agri/FoodTech/Rural|software
+SIH25075|Gamified Platform to Promote Sustainable Farming Practices|GoKL|Agri/FoodTech/Rural|software
+SIH25076|AI-Based Farmer Query Support and Advisory System|GoKL|Agri/FoodTech/Rural|software
+SIH25077|A hardware that can detect and prevent unauthorized use of electric fences|GoKL|Smart Automation|hardware
+SIH25079|Software other than a circuit breaker that can be used to detect and turn off LT lines when the line breaks|GoKL|Disaster Management|software
+SIH25080|Document Overload at Kochi Metro Rail Limited (KMRL)-An automated solution|GoKL|Smart Automation|software
+SIH25081|AI-Driven Train Induction Planning & Scheduling for Kochi Metro Rail Limited (KMRL)|GoKL|Smart Automation|software
+SIH25082|Development of a travel related software app that can be installed on mobile phones that could capture trip related information|GoKL|Travel & Tourism|software
+SIH25083|Digital Health Record Management System for migrant workers in Kerala aligned with sustainable development goals.|GoKL|MedTech/BioTech/HealthTech|software
+SIH25084|Earthquake stabilised dialysis system for patient safety during seismic events.|GoKL|Disaster Management|hardware
+SIH25085|Solution for NON-REVENUE LOSS IN WATER SUPPLY Solution to improve AWARENESS IN WATER CONSERVATION|GoKL|Miscellaneous|hardware
+SIH25090|GREY WATER MANAGEMENT AND REUSE WET LAND MANAGEMENT WATER CONSERVATION|GoKL|Clean & Green Technology|hardware
+SIH25091|AI-Based Timetable Generation System aligned with NEP 2020 for Multidisciplinary Education Structures|GoJK|Smart Automation|software
+SIH25092|Development of a Digital Mental Health and Psychological Support System for Students in Higher Education|GoJK|MedTech/BioTech/HealthTech|software
+SIH25093|Centralised Digital Platform for Comprehensive student activity record in HEIs|GoJK|Smart Education|software
+SIH25094|One-Stop Personalized Career & Education Advisor|GoJK|Smart Education|software
+SIH25095|Research and redesign a sport equipment commonly found in sport industry and utilize Fusion software to reimagine its design|Autodesk|Smart Education|hardware
+SIH25096|Students are supposed to use Fusion software to generate NC code with machine details & tool library for any industrial component|Autodesk|Smart Education|hardware
+SIH25097|Research and develop a design on autonomous small precision focused machine for planting crops or weeding.|Autodesk|Smart Education|software
+SIH25098|Students are tasked with designing a 4-story commercial office building using Revit Architecture and Revit Structure|Autodesk|Smart Education|software
+SIH25099|AI-powered monitoring of crop health, soil condition, and pest risks using multispectral/hyperspectral imaging and sensor data.|MathWorks India Pvt. Ltd.|Agri/FoodTech/Rural|software
+SIH25100|Accelerating High-Fidelity Road Network Modeling for Indian Traffic Simulations.|MathWorks India Pvt. Ltd.|Transportation & Logistics|software
+SIH25101|Remote classroom for rural colleges|GoRJ|Smart Education|software
+SIH25102|AI-based drop-out prediction and counseling system|GoRJ|Smart Automation|software
+SIH25103|ERP-based Integrated Student Management system|GoRJ|Smart Automation|software
+SIH25104|Language Agnostic Chatbot|GoRJ|Smart Education|software
+SIH12507|Develop computer programs (in any language, preferably Python) to identify the design principles behind the Kolam designs and recreate the kolams.|AICTE|Heritage & Culture|software

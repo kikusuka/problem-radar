@@ -15,16 +15,18 @@ from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from radar import hunt, research, solved, sources, store, verify
+from radar import brief, hunt, library, pulse, research, solved, sources, store, verify
 
 INSTRUCTIONS = (
-    "Problem Radar is a problem-finding lens, not a web search. Web search returns pages for one query; this finds what people struggle with, "
-    "in their own words, and shows how much evidence stands behind it and what is missing. Work in a loop: "
-    "1) research_niche (pass region and local wording in `also`); judge `candidates` yourself. "
-    "2) Follow `next_moves`: read_thread on the posts with many comments (the detail is in the replies), search_pain with the words in `people_say`, "
-    "and drill into `communities`. "
-    "3) check_if_solved, then validate_problem for the best two or three. "
-    "4) Run check_claims on your key claims and URLs and fix what it flags. Label every claim DOCUMENTED (official, measured or paper source, cited) or HYPOTHESIS (public posts only). "
+    "Problem Radar is a problem-finding lens, not a web search: it finds what people struggle with, in their own words, and shows how much "
+    "evidence stands behind it and what is missing. You do the judging; it fetches and checks. Follow these stages. "
+    "1 ORIENT (pick a direction): student_hunt or plan_hunt if the person is unsure; whats_happening for what is live now; "
+    "find_known_problems for problems hackathons already published. "
+    "2 DISCOVER: research_niche (pass region and local wording in `also`); read `candidates` yourself and group them by meaning. "
+    "3 DIG: follow `next_moves`: read_thread (the detail is in the replies), search_pain with the words in `people_say`, drill into `communities`. "
+    "4 TEST: check_if_solved, then validate_problem for the best two or three. Existing products are supply, not proof of demand. "
+    "5 DELIVER: write a brief in the shape of radar://brief, label each piece of evidence DOCUMENTED (official, measured or paper source) or "
+    "HYPOTHESIS (public posts only), say who is not heard, then run check_brief and fix what it flags before answering. "
     "Results are public posts, not a survey; absence of results is not proof a problem does not exist."
 )
 
@@ -85,6 +87,50 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
     for YOU, ethics notes, and the steps to follow.
     """
     return hunt.student_hunt(level, field, goal, weeks, team_size, interests, resources, location)
+
+
+@mcp.tool(title="What people are asking right now", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
+def whats_happening(topic: str = "", limit: int = 15) -> dict:
+    """A rolling feed of current problems: recent Ask HN questions that read as problems, and the most-signed open UK petitions.
+    Use it to see what is live right now or to pick a topic before research_niche. topic filters it; empty shows everything.
+    It is a small current sample (developers and the UK lean), refreshed daily by a scheduled job, not a census. No match
+    does not mean a topic is not a problem. The result says how old the feed is and whether it was fetched just now."""
+    return pulse.find(topic, limit)
+
+
+@mcp.tool(title="Check a finished problem brief", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def check_brief(brief_json: dict) -> dict:
+    """Last step before you answer. Pass your finished brief as an object with: statement, who, workaround, evidence (a list of
+    {claim, url, label}), already_solved, who_is_missing, validation_plan, kill_criteria. Reports missing fields, links this server
+    never returned, claims the cited text does not support, and public posts wrongly labelled DOCUMENTED. Read radar://brief for
+    the full shape. ok=true means the brief is complete and its citations match, not that the problem is real."""
+    return brief.check(brief_json)
+
+
+@mcp.resource("radar://brief")
+def brief_resource() -> str:
+    """The shape of a finished problem brief and the rules for labelling evidence."""
+    import json
+    return json.dumps(brief.SCHEMA, indent=1)
+
+
+@mcp.resource("radar://pulse")
+def pulse_resource() -> str:
+    """The current rolling feed of problems people are asking about right now."""
+    import json
+    return json.dumps(pulse.load(), indent=1, ensure_ascii=False)
+
+
+@mcp.tool(title="Find problems organisers have published", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def find_known_problems(topic: str = "", kind: str = "", limit: int = 12) -> dict:
+    """Problem statements that hackathons and challenges have already published (Smart India Hackathon 2025, NASA Space Apps 2025).
+
+    Good for a student who needs a scoped, buildable starting point fast. topic: a few words ("water", "crop advisory", "rural
+    education"); empty lists entries. kind: software or hardware (SIH entries are tagged). Each entry names its event, year and
+    organiser and links to the official page. These are what an organiser asked for, NOT proof that people want it or that it is
+    unsolved or still open: follow with check_if_solved and research_niche before building. Works offline from a fixed list.
+    """
+    return library.find(topic, kind, limit=limit)
 
 
 @mcp.tool(title="Check if a problem is already solved", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))

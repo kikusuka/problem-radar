@@ -405,14 +405,24 @@ def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post]
     return posts, status
 
 
+JOB_SUBREDDITS = {"jobhuntify", "forhire", "hiring", "jobs", "remotejobs", "remotework", "jobbit", "freelance_jobs", "slavelabour", "jobopenings"}
+_JOB_AD_TITLE = re.compile(r"^\s*(?:remote\s+)?job\s*[-:\u2013]|\[(?:hiring|for hire)\]|\bis hiring\b|\bwe(?:'re| are) hiring\b|\bnow hiring\b", re.I)
+
+
+def _is_job_ad(p: S.Post) -> bool:
+    """Job listings use the same words as the topic ("Crop Claims Adjuster") but are not people describing a problem."""
+    sub = (p.meta.get("subreddit") or (p.source.split("/", 1)[1] if "/" in p.source else "")).lower()
+    return sub in JOB_SUBREDDITS or bool(_JOB_AD_TITLE.search(p.title or ""))
+
+
 def _dedupe(posts: list[S.Post]) -> list[S.Post]:
-    """Deduplicate repeated IDs and cross-platform reposts deterministically."""
+    """Drop job ads, then deduplicate repeated IDs and cross-platform reposts deterministically."""
     def quality(post: S.Post):
         body = _body(post)
         return (-len(body), -(post.score + 2 * post.comments), post.source, post.id)
 
     seen_id, seen_title, out = set(), set(), []
-    for p in sorted(posts, key=quality):
+    for p in sorted((x for x in posts if not _is_job_ad(x)), key=quality):
         key = re.sub(r"\W+", "", p.title.lower())[:120]
         if p.id in seen_id or (key and key in seen_title):
             continue

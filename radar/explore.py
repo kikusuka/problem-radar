@@ -71,7 +71,10 @@ def next_moves(views: list[dict], clusters: list[dict], vocab: list[str], comms:
                niche: str, lens: str, region: str = "", limit: int = 6) -> list[dict]:
     """Concrete next tool calls, in priority order. The LLM decides which to run."""
     moves: list[dict] = []
-    threads = sorted((v for v in views if readable(v) and v.get("comments", 0) >= 5), key=lambda v: -v["comments"])
+    pool = [v for v in views if readable(v) and v.get("comments", 0) >= 5]
+    # A big thread only helps if it is about the topic: prefer threads with the topic in the title over merely busy ones.
+    pool = [v for v in pool if v.get("topic_in") == "title"] or pool
+    threads = sorted(pool, key=lambda v: -v["comments"])
     for v in threads[:2]:
         moves.append({"tool": "read_thread", "args": {"url": v["url"]},
                       "why": f"{v['comments']} comments: the detail (who pays, what they tried, what failed) is in the replies, not the headline"})
