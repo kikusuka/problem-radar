@@ -1,5 +1,6 @@
 """Pain-phrase queries, signal detection, relevance."""
 from __future__ import annotations
+from . import text as _text
 
 import math
 import re
@@ -179,7 +180,7 @@ MODIFIERS = {
 
 
 def content_words(text: str) -> list[str]:
-    return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2 and w not in STOP_WORDS]
+    return [w for w in _text.tokens(text) if (len(w) > 2 or _text.has_unspaced(w)) and w not in STOP_WORDS]
 
 
 def query_variants(problem: str) -> list[str]:
@@ -188,7 +189,7 @@ def query_variants(problem: str) -> list[str]:
     Do not choose only the longest words: that can drop critical terms such as
     "offline", "low-end" or "Android" from a long problem statement.
     """
-    raw = re.findall(r"[a-z0-9]+(?:-[a-z0-9]+)*", problem.lower())
+    raw = _text.joined_words(problem)
     acronyms = {w.lower() for w in re.findall(r"\b[A-Z][A-Z0-9]{1,}\b", problem)}
     preserve_patterns = (
         r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bon[- ]device\b|\bon device\b",
@@ -206,7 +207,7 @@ def query_variants(problem: str) -> list[str]:
     for word in raw:
         if word in words or word in STOP_WORDS:
             continue
-        if len(word) <= 2 and word not in acronyms and word not in required:
+        if len(word) <= 2 and word not in acronyms and word not in required and not _text.has_unspaced(word):
             continue
         if word in GENERIC and word not in required:
             continue
@@ -231,10 +232,9 @@ def query_variants(problem: str) -> list[str]:
     out = [" ".join(primary)]
     if len(words) > 2:
         # A narrower alternative still carries every explicit constraint.
-        extras = sorted(
-            (w for w in words if w not in required),
-            key=lambda w: (-len(w), words.index(w)),
-        )[:2]
+        # English puts the narrowing modifier before the noun ("crop insurance"), so keep the first two words, not the longest:
+        # length says nothing about specificity and dropped "crop" from "crop insurance claims".
+        extras = [w for w in words if w not in required][:2]
         secondary_set = set(required_ordered + extras)
         secondary = [w for w in words if w in secondary_set]
         q = " ".join(secondary)
@@ -403,18 +403,19 @@ def constraints_match(query: str, text: str) -> bool:
     return not missing_constraints(query, text)
 
 def _has_word(word: str, text: str, loose: bool = False) -> bool:
-    """Match at the start of a word only. Short words (under 5 letters) must match whole words, so 'aid' is not
+    """Match at the start of a word only, in any script. Short words (under 5 letters) must match whole words, so 'aid' is not
     found in 'said' and 'grip' is not found in 'gripping'. Longer words match their 5-letter stem ('invoices' ~ 'invoice')."""
     w = word.lower()
+    toks = _text.tokens(text)
     if len(w) < 5:
-        return re.search(r"\b" + re.escape(w) + r"s?\b", text, re.I) is not None
+        return any(t == w or t == w + "s" for t in toks)
     stem = w[:5] if loose else w[:min(7, max(5, len(w) - 2))]  # 'assistive' -> 'assisti', so it does not match 'assistant'
-    return re.search(r"\b" + re.escape(stem), text, re.I) is not None
+    return any(t.startswith(stem) for t in toks)
 
 
 def _near(words: list[str], text: str, window: int = 8) -> bool:
     """True when the words appear close together, like a phrase. 'old age home' must not match 'moved back home ... age 34 ... old'."""
-    tokens = re.findall(r"[a-z0-9']+", text.lower())
+    tokens = _text.tokens(text)
 
     def positions(w: str) -> list[int]:
         w = w.lower()
@@ -436,7 +437,7 @@ def mentions(term: str, text: str) -> int:
         return 0
     w = max(words, key=len)
     stem = w[:min(7, max(5, len(w) - 2))] if len(w) >= 5 else w
-    tokens = re.findall(r"[a-z0-9']+", text.lower())
+    tokens = _text.tokens(text)
     return sum(1 for t in tokens if (t.startswith(stem) if len(w) >= 5 else t in (w, w + "s")))
 
 
@@ -528,7 +529,7 @@ for _group, _aliases in _TOPIC_ALIAS_GROUPS.items():
 
 def _topic_groups(query: str) -> list[tuple[str, str]]:
     """Return distinct topic anchors while stripping generic and constraint-only terms."""
-    tokens = re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", (query or "").lower())
+    tokens = re.findall(r"[a-z0-9]+(?:[.+-][a-z0-9]+)*", (query or "").lower()) if (query or "").isascii() else list(_text.tokens(query or ""))
     groups: list[tuple[str, str]] = []
     seen: set[str] = set()
     for index, token in enumerate(tokens):

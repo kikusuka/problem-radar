@@ -29,7 +29,7 @@ DOMAINS = [
 SOFTWARE_SKILLS = {"computer", "cs", "informatics", "python", "javascript", "typescript", "react", "web", "app", "coding", "programming", "software", "developer", "ml", "ai", "backend", "frontend"}
 HARDWARE_SKILLS = {"arduino", "electronics", "soldering", "3d", "printing", "robotics", "raspberry", "iot", "hardware", "cad", "woodworking", "mechanical"}
 RESEARCH_SKILLS = {"biology", "chemistry", "physics", "lab", "research", "statistics", "medicine", "psychology", "neuroscience", "thesis", "math", "mathematics"}
-POLICY_SKILLS = {"policy", "law", "legal", "advocacy", "civic", "community", "organizing", "writing", "research", "politics", "nonprofit"}
+POLICY_SKILLS = {"policy", "law", "legal", "advocacy", "civic", "community", "organizing", "writing", "politics", "nonprofit"}
 
 
 STUDENT_DOMAINS = [
@@ -65,6 +65,8 @@ def explore_domains(interest: str = "") -> dict:
     return {
         "domains": picked or pool,
         "matched_your_interest": bool(picked) or not words,
+        "note": ("These are starting prompts, not findings. The list is short, written in English and leans toward urban, high-income, "
+                 "English-speaking settings; it is blind to problems that are specific to where the person lives. Ask the person what they see around them first."),
         "next": "Pick 2-3 niches and call research_niche on each (set lens to match the fix you can deliver).",
     }
 
@@ -75,8 +77,9 @@ def _lens_from(skills: list[str], explicit: str) -> str:
     toks = {w for s in skills for w in re.findall(r"[a-z0-9]+", s.lower())}
     scores = {"software": len(toks & SOFTWARE_SKILLS), "hardware": len(toks & HARDWARE_SKILLS),
               "policy": len(toks & POLICY_SKILLS), "research": len(toks & RESEARCH_SKILLS)}
-    best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "any"
+    top = max(scores.values())
+    leaders = [k for k, v in scores.items() if v == top]
+    return leaders[0] if top > 0 and len(leaders) == 1 else "any"  # a tie is "no clear signal", never a silent pick by list order
 
 
 def plan_hunt(goal: str = "general", interests: list[str] | None = None, skills: list[str] | None = None,
@@ -113,6 +116,8 @@ def plan_hunt(goal: str = "general", interests: list[str] | None = None, skills:
             "5. Present the top pick, one backup, and what to check with 5 real people before building.",
         ],
         "fit_rubric": FIT_RUBRIC,
+        "rubric_note": ("The point values are a judgment aid, not a validated model. Use them to compare options and to show your reasoning, not to report a "
+                        "precise score. If the top pick changes when you shift the weights a little, say that the choice is close."),
         "analysis_guide": build_guide(chosen, goal),
         "location_note": ("Official civic data covers only the UK and New York City; for other places use search_pain."
                           if chosen in ("policy", "any") and location else ""),

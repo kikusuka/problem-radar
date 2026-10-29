@@ -15,10 +15,22 @@ from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from radar import hunt, research, solved, sources, store
+from radar import hunt, research, solved, sources, store, verify
+
+INSTRUCTIONS = (
+    "Problem Radar is a problem-finding lens, not a web search. Web search returns pages for one query; this finds what people struggle with, "
+    "in their own words, and shows how much evidence stands behind it and what is missing. Work in a loop: "
+    "1) research_niche (pass region and local wording in `also`); judge `candidates` yourself. "
+    "2) Follow `next_moves`: read_thread on the posts with many comments (the detail is in the replies), search_pain with the words in `people_say`, "
+    "and drill into `communities`. "
+    "3) check_if_solved, then validate_problem for the best two or three. "
+    "4) Run check_claims on your key claims and URLs and fix what it flags. Label every claim DOCUMENTED (official, measured or paper source, cited) or HYPOTHESIS (public posts only). "
+    "Results are public posts, not a survey; absence of results is not proof a problem does not exist."
+)
 
 mcp = FastMCP(
     "problem-radar",
+    instructions=INSTRUCTIONS,
     host=os.environ.get("HOST", "0.0.0.0"),
     port=int(os.environ.get("PORT", "8000")),
 )
@@ -27,7 +39,7 @@ mcp = FastMCP(
 PRIVACY = (
     "Problem Radar privacy: the server keeps no accounts and stores no personal data. Search terms you send are used to query "
     "public sources (Hacker News, Reddit, Stack Exchange, GitHub, GitLab, arXiv, OpenAlex, Europe PMC, openFDA and public "
-    "government datasets) and results may be cached on the server for up to 36 hours. Usernames of post authors are never returned."
+    "government datasets) and results may be cached on the server for up to 36 hours (Reddit content is held in memory only, never written to disk). Usernames of post authors are never returned."
 )
 TERMS = (
     "Problem Radar terms: free, read-only research aid provided as is, without warranty. Results are public posts and records; "
@@ -153,6 +165,24 @@ def search_pain(query: str, sources: list[str] | None = None, limit: int = 20, s
     return research.search(query, sources, limit, subreddit, se_sites)
 
 
+@mcp.tool(title="Read a thread's comments", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
+def read_thread(url: str, limit: int = 30) -> dict:
+    """Read the comments of one Hacker News or Reddit thread from a result's url. The real evidence (who pays, what they tried,
+    what failed) is usually in the replies, not the headline. Comments are flagged for payment, workaround and solution requests
+    as cues to read, not proof. Authors are never returned. Count distinct people, not comments."""
+    return research.read_thread(url, limit)
+
+
+@mcp.tool(title="Check claims against the evidence", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
+def check_claims(claims: list[dict]) -> dict:
+    """Before you answer, check your key claims against what this server actually retrieved. Pass a list of
+    {"claim": "<one sentence>", "urls": ["<url you cite>"]}. For each claim it reports whether the URL was really returned by this
+    server (catches invented links), whether the numbers in the claim appear in the text, and the sentence that best supports it.
+    Statuses: supported_by_text, partly_supported, not_found_in_text, url_not_retrieved. Lexical check, not a judge of meaning:
+    read anything that is not supported_by_text, and fix or drop what it flags."""
+    return verify.check_claims(claims)
+
+
 @mcp.tool(title="Validate a problem", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
 def validate_problem(problem: str, niche: str = "", lens: str = "software") -> dict:
     """Check a candidate problem before building or campaigning: existing solutions, willingness-to-pay signals and workarounds.
@@ -207,6 +237,29 @@ if os.environ.get("ENABLE_PERSONAL") == "1":  # local use only; on a hosted serv
 
 if os.environ.get("ENABLE_PERSONAL") == "1" and os.environ.get("TRANSPORT", "stdio") != "stdio":
     raise RuntimeError("ENABLE_PERSONAL is for local stdio use only; disable it for HTTP transports.")
+
+@mcp.resource("radar://method")
+def method_resource() -> str:
+    """How Problem Radar judges evidence: what counts as demand, what is only a hint, and what it cannot see."""
+    from pathlib import Path
+    f = Path(__file__).parent / "docs" / "METHOD.md"
+    return f.read_text(encoding="utf-8") if f.exists() else INSTRUCTIONS
+
+
+@mcp.prompt()
+def find_problems(topic: str, region: str = "") -> str:
+    """Step-by-step way to turn research_niche output into a few honest problem statements."""
+    return (
+        f"Find real, unsolved problems in: {topic}" + (f" (region: {region})" if region else "") + ".\n"
+        "1. Call research_niche. Judge `candidates` yourself; clusters and strength labels are hints, not verdicts.\n"
+        "2. For each promising problem, name the evidence: who complains, what workaround they use, and whether anyone pays.\n"
+        "3. Call check_if_solved. Existing products are supply, not proof of demand.\n"
+        "4. Invert the claim: if an official or company source says it is solved, search for users reporting that it is not.\n"
+        "5. Look for gaps between places: solved in one region, broken in another.\n"
+        "6. Use read_thread on the best threads and check_claims on your final statements.\n"
+        "7. Label every statement DOCUMENTED (cited) or HYPOTHESIS. Say who is not heard (representation_risk). Do not invent scores."
+    )
+
 
 if __name__ == "__main__":
     mcp.run(transport=os.environ.get("TRANSPORT", "stdio"))

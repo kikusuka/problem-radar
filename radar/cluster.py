@@ -10,6 +10,7 @@ import html
 import re
 from collections import Counter
 
+from . import text as _text
 from .pain import signals
 
 STOP = set(
@@ -37,7 +38,10 @@ def clean(text: str) -> str:
 
 def keywords(text: str, extra_stop: set[str] | None = None) -> set[str]:
     stop = STOP | (extra_stop or set())
-    return {t for t in TOKEN.findall(text.lower()) if t not in stop}
+    found = {t for t in TOKEN.findall(text.lower()) if t not in stop}
+    if not text.isascii():  # words in other scripts, or accented Latin, which the ASCII pattern cannot see
+        found |= {t for t in _text.tokens(text) if not t.isascii() and (len(t) > 2 or _text.has_unspaced(t)) and t not in stop}
+    return found
 
 
 def jaccard(a: set[str], b: set[str]) -> float:
@@ -49,7 +53,7 @@ def jaccard(a: set[str], b: set[str]) -> float:
 MIN_SHARED = 3
 
 
-def cluster_posts(posts: list[dict], niche: str, threshold: float = 0.3) -> list[list[dict]]:
+def cluster_posts(posts: list[dict], niche: str, threshold: float = 0.3, min_shared: int = MIN_SHARED) -> list[list[dict]]:
     """Greedy clustering. posts are dicts (see sources.Post)."""
     niche_tokens = keywords(niche)
     items = []
@@ -72,7 +76,7 @@ def cluster_posts(posts: list[dict], niche: str, threshold: float = 0.3) -> list
         for c in clusters:
             for _, mkw in c["members"]:
                 shared = len(kw & mkw)
-                if shared < MIN_SHARED:
+                if shared < min_shared:
                     continue
                 sim = shared / min(len(kw), len(mkw))
                 if sim > best_sim:

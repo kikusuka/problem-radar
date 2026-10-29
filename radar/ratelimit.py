@@ -25,7 +25,7 @@ def provider_limits() -> dict[str, tuple[float, float]]:
     The numbers come from each provider's published limits, kept below them on purpose because every user of a
     public server shares them:
       Hacker News (Algolia)  10,000 requests/hour per IP
-      Reddit OAuth           100 requests/minute per client
+      Reddit OAuth           60 requests/minute per client (Reddit's published limit)
       Stack Exchange         300/day per IP without a key, 10,000/day with one
       GitHub                 60/hour without a token, search 30/minute with one
       openFDA                1,000/day per IP without a key, far more with one
@@ -44,6 +44,8 @@ def provider_limits() -> dict[str, tuple[float, float]]:
         "petitions": (1.0, 5),
         "nyc311": (1.0, 5),
         "bluesky": (0.5, 3),
+        "gdelt": (0.2, 2),  # GDELT asks for about one request every five seconds
+        "ckan": (1.0, 6),
     }
 
 

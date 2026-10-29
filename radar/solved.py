@@ -16,11 +16,23 @@ from . import sources as S
 from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_anchor_gaps, topic_candidate_fit, topic_fit
 from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
-SOLUTION_RE = re.compile(
-    r"\b(alternative|alternatives|saas|plugin|extension|startup|launched|i built|we built|show hn|open[- ]source|app that|"
-    r"tool called|product|device|gadget|kit|kickstarter|sells|service)\b",
-    re.I,
-)
+# Cues that a sentence is describing something that addresses the problem. Generic words ("service", "product") are left out for
+# software and policy because they appear in almost any text; the physical-product words apply only to the hardware lens.
+SOFTWARE_CUES = r"alternatives?|saas|plugin|extension|startup|launched|i built|we built|show hn|open[- ]source|app that|tool called"
+HARDWARE_CUES = SOFTWARE_CUES + r"|device|gadget|kit|kickstarter|sells|product"
+SOLUTION_RE = re.compile(rf"\b({SOFTWARE_CUES})\b", re.I)  # kept for callers that match a whole text
+SOLUTION_RE_HARDWARE = re.compile(rf"\b({HARDWARE_CUES})\b", re.I)
+
+
+def _solution_sentence(text: str, variants: list[str], lens: str) -> str | None:
+    """A sentence that mentions the problem AND something addressing it. A cue far from the topic ("service" three paragraphs
+    away) does not count as evidence that a solution exists."""
+    rx = SOLUTION_RE_HARDWARE if lens == "hardware" else SOLUTION_RE
+    for sent in re.split(r"(?<=[.!?])\s+", text or ""):
+        if rx.search(sent) and any(relevance(v, sent, loose=True) > 0 for v in variants):
+            return sent.strip()[:240]
+    return None
+
 
 GAP_ANGLES = (
     "If the problem is partly solved, the opening is usually WHO or WHAT the best solution leaves out: price, language, "
@@ -88,10 +100,13 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
 
     if strong or (lens == "research" and len(cited) >= 3):
         hint = "well_served_for_the_general_case"
-    elif solution_evidence:
+    elif some or cited or discussion:
         hint = "partially_solved"
         if not reasons:
-            reasons.append("some related implementation or product discussion exists, but its strength and fit remain uncertain")
+            reasons.append("product discussion mentions something that addresses the topic, but its strength and fit remain uncertain")
+    elif projects:
+        hint = "weak_related_work_only"
+        reasons.append(f"{len(projects)} related project(s) found, all small (under 50 stars) or archived: a lead to read, not evidence the problem is served")
     elif lens == "hardware":
         hint = "inconclusive_products_not_covered"
         reasons.append("nothing found that demonstrates a matching solution, but physical products are not fully covered by these sources")
@@ -104,7 +119,9 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
             reasons.append("Related research papers or public actions were found, but they do not by themselves demonstrate a working solution matching the requested constraints.")
         else:
             reasons.append("searched several sources with short keyword variants and found no clearly relevant solution")
-    return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "caveat": caveat}
+    basis = ("Hints come from topic words matched in repositories, posts and papers. Stars and citations measure popularity, not whether the "
+             "problem is solved for the people who have it, and a match on topic words is not proof a project does what you need. Read the items.")
+    return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "basis": basis, "caveat": caveat}
 
 
 def check(problem: str, lens: str = "software") -> dict:
@@ -179,8 +196,10 @@ def check(problem: str, lens: str = "software") -> dict:
             papers.append(_compact(p, rel, text))
         elif p.source == "petitions":
             actions.append(_compact(p, rel, text))
-        elif SOLUTION_RE.search(text):
-            discussion.append(_compact(p, rel, text))
+        else:
+            hit = _solution_sentence(text, variants, lens)
+            if hit:
+                discussion.append({**_compact(p, rel, text), "solution_sentence": hit})
     projects.sort(key=lambda x: x["stars"], reverse=True)
     papers.sort(key=lambda x: x["score"], reverse=True)
     actions.sort(key=lambda x: x["score"], reverse=True)

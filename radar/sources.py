@@ -13,6 +13,7 @@ Sources (free public access or free tiers; quotas and access policies still appl
   petitions  UK Parliament petitions         no key; UK only
   nyc311     NYC 311 complaints              no key; NYC only
   openFDA    Medical-device event reports    no key; US only
+  gdelt      News, last ~3 months            no key; many languages
 """
 from __future__ import annotations
 
@@ -575,8 +576,109 @@ def nyc311(query: str, limit: int = 20, **_) -> Result:
         )
     return Result(out)
 
+# ------------------------------------------------ Stack Exchange site directory
+_se_sites_cache = {"until": 0.0, "rows": []}
+
+
+def se_site_directory() -> list[dict]:
+    """Every main Stack Exchange site (name, audience, api name), fetched once and kept for a week. A topic can then find the community
+    that discusses it (parenting, gardening, law, pets...) without a hand-written table. Any failure returns an empty list, retried in 10 minutes."""
+    now = time.time()
+    if now < _se_sites_cache["until"]:
+        return _se_sites_cache["rows"]
+    params = {"pagesize": 500}
+    if os.environ.get("STACKEXCHANGE_KEY"):
+        params["key"] = os.environ["STACKEXCHANGE_KEY"]
+    data, err = _get("https://api.stackexchange.com/2.3/sites", params)
+    rows: list[dict] = []
+    if isinstance(data, dict):
+        for it in data.get("items", []) or []:
+            if it.get("site_type") == "main_site" and it.get("site_state", "normal") == "normal" and it.get("api_site_parameter"):
+                rows.append({"api": it["api_site_parameter"], "name": _plain(it.get("name")), "audience": _plain(it.get("audience"))})
+    _se_sites_cache.update(until=now + (7 * 86400 if rows else 600), rows=rows)
+    return rows
+
+
+# ------------------------------------------------- News attention (GDELT, no key)
+def gdelt(query: str, limit: int = 20, **_) -> Result:
+    """Recent news articles (GDELT DOC 2.0 covers roughly the last three months, in many languages). News shows that a problem is
+    in the public eye NOW, which helps separate a live problem from an old thread. It is journalists' framing, not first-person pain."""
+    data, err = _get("https://api.gdeltproject.org/api/v2/doc/doc",
+                     {"query": query, "mode": "artlist", "format": "json", "maxrecords": min(limit, 50), "timespan": "3months", "sort": "hybridrel"})
+    if not isinstance(data, dict):
+        return Result([], False, err or "unexpected response from GDELT")
+    out = []
+    for a in data.get("articles", []) or []:
+        url, title = a.get("url") or "", _plain(a.get("title"))
+        if not (url and title):
+            continue
+        seen = a.get("seendate") or ""
+        date = f"{seen[0:4]}-{seen[4:6]}-{seen[6:8]}" if len(seen) >= 8 and seen[:8].isdigit() else ""
+        where = ", ".join(x for x in (a.get("domain"), a.get("sourcecountry"), a.get("language")) if x)
+        out.append(Post("gdelt", "gd-" + re.sub(r"\W+", "", url)[-40:], title, where, url, "", 0, 0, date, {"site": a.get("domain") or ""}))
+    return Result(out)
+
+
+# ------------------------------------------------------------- reading a thread
+def _flatten_hn(node: dict, depth: int, out: list, cap: int) -> None:
+    for ch in node.get("children") or []:
+        if len(out) >= cap:
+            return
+        text = _plain(ch.get("text"))
+        if text:
+            out.append({"text": text[:600], "score": ch.get("points") or 0, "depth": depth})
+        _flatten_hn(ch, depth + 1, out, cap)
+
+
+def _flatten_reddit(children: list, depth: int, out: list, cap: int) -> None:
+    for c in children or []:
+        if len(out) >= cap:
+            return
+        d = (c or {}).get("data") or {}
+        body = _plain(d.get("body"))
+        if c.get("kind") == "t1" and body and body not in ("[deleted]", "[removed]"):
+            out.append({"text": body[:600], "score": d.get("score") or 0, "depth": depth})
+        replies = d.get("replies")
+        if isinstance(replies, dict):
+            _flatten_reddit((replies.get("data") or {}).get("children"), depth + 1, out, cap)
+
+
+def read_thread(url: str, limit: int = 30) -> dict:
+    """Comments of one Hacker News or Reddit thread. Authors are never returned. Returns {title, source, comments, error}."""
+    from urllib.parse import urlparse
+    p = urlparse(url or "")
+    host, path = p.netloc.lower(), p.path
+    limit = max(5, min(int(limit), 60))
+    if p.scheme != "https":
+        return {"error": "only https links to Hacker News or Reddit threads are supported"}
+    if host == "news.ycombinator.com":
+        m = re.fullmatch(r"\d{1,12}", (dict(q.split("=", 1) for q in p.query.split("&") if "=" in q)).get("id", ""))
+        if not m:
+            return {"error": "not a Hacker News item link (expected news.ycombinator.com/item?id=...)"}
+        data, err = _get(f"https://hn.algolia.com/api/v1/items/{m.group(0)}")
+        if data is None:
+            return {"error": err, "source": "hn"}
+        out: list = []
+        _flatten_hn(data, 0, out, limit)
+        return {"source": "hn", "title": data.get("title") or data.get("story_title") or "", "post_text": _plain(data.get("text"))[:800],
+                "comments": out, "error": ""}
+    if host in ("www.reddit.com", "reddit.com", "old.reddit.com"):
+        m = re.search(r"/comments/([a-z0-9]{2,12})(?:/|$)", path)
+        if not m:
+            return {"error": "not a Reddit thread link (expected reddit.com/r/<sub>/comments/<id>/...)"}
+        data, err = _reddit_json(f"comments/{m.group(1)}", {"limit": limit, "depth": 3, "sort": "top"})
+        if not isinstance(data, list) or len(data) < 2:
+            return {"error": err or "unexpected response from Reddit", "source": "reddit"}
+        post = (((data[0].get("data") or {}).get("children") or [{}])[0].get("data")) or {}
+        out = []
+        _flatten_reddit((data[1].get("data") or {}).get("children"), 0, out, limit)
+        return {"source": "reddit", "title": post.get("title") or "", "post_text": _plain(post.get("selftext"))[:800],
+                "comments": out, "error": ""}
+    return {"error": "read_thread supports Hacker News and Reddit links only"}
+
+
 SOURCES = {"hn": hn, "se": se, "reddit": reddit, "reddit_community": reddit_community, "bluesky": bluesky, "fda_devices": fda_devices, "europepmc": europepmc, "arxiv": arxiv, "gitlab": gitlab, "github": github,
-           "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos}
+           "petitions": petitions, "nyc311": nyc311, "scholar": scholar, "github_repo": github_repos, "gdelt": gdelt}
 
 
 def enabled() -> dict:
@@ -597,4 +699,5 @@ def enabled() -> dict:
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},
         "github": {"enabled": True, "note": "token set" if os.environ.get("GITHUB_TOKEN") else "no token: low rate limit"},
+        "gdelt": {"enabled": True, "note": "recent news (about the last 3 months, many languages); no key; shows what is in the public eye now; not yet confirmed against the live service"},
     }

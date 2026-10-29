@@ -114,7 +114,7 @@ def test_evidence_summary_counts_sources_and_handles_without_claiming_identity()
     assert summary["qualifying_post_count"] == 3
     assert summary["distinct_source_count"] == 2
     assert summary["distinct_author_handles"] == 2
-    assert summary["corroborated_across_sources"] is True
+    assert summary["appears_in_multiple_sources"] is True
     assert "not identity-checked" in summary["interpretation"]
 
 
@@ -219,7 +219,8 @@ def test_direct_search_rotates_alternate_queries_per_source(monkeypatch):
     result = research.search(query, sources=["reddit", "github", "hn"], limit=5)
 
     assert all(query in qs for qs in calls.values())
-    second_queries = [qs[1] for qs in calls.values() if len(qs) > 1]
+    # a source's searches run concurrently, so pick the alternate by value, not by call order
+    second_queries = [next(x for x in qs if x != query) for qs in calls.values() if len(qs) > 1]
     assert len(set(second_queries)) == 3
     assert len(result["query_variants_scheduled"]) >= 4
 

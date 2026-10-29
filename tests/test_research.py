@@ -40,6 +40,12 @@ def fakes(monkeypatch, tmp_path):
     monkeypatch.setitem(S.SOURCES, "arxiv", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "fda_devices", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S.SOURCES, "europepmc", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "gdelt", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "petitions", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "nyc311", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "scholar", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "github", lambda q, limit=20, **k: S.Result([]))
+    monkeypatch.setitem(S.SOURCES, "github_repo", lambda q, limit=20, **k: S.Result([]))
     monkeypatch.setitem(S._se_cooldown, "until", 0.0)
 
 
@@ -90,11 +96,22 @@ def test_search_pain_with_custom_query():
     assert out["results"] and out["coverage"]["hn"]["state"] == "ok"
 
 
-def test_validate_buckets():
+def test_validate_buckets(monkeypatch):
+    posts = [
+        P("hn", 30, "Quickbooks invoices reconciliation", "I reconcile quickbooks invoices by hand in a spreadsheet every week, a tedious copy paste workaround. "
+          "We switched to a saas alternative for quickbooks invoices reconciliation and pay $40 per month for it.", "a"),
+        P("hn", 31, "Football transfer rumours", "The club paid $80 million for the striker, a record fee. I would pay to see that game.", "b"),
+        P("hn", 32, "Invoice template", "Free invoice template, I would pay $5 for a nicer one.", "c"),
+    ]
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: (posts, {"hn": {"state": "ok", "posts": 3}, "reddit": {"state": "ok", "posts": 0}}))
     out = research.validate("quickbooks invoices reconciliation", "accounting")
     assert out["counts"]["existing_solutions"] >= 1
     assert out["counts"]["paying_signals"] >= 1
     assert out["counts"]["workaround_signals"] >= 1
+    assert out["rejected_off_topic"] == 2                       # the football post and the loosely related template post
+    urls = {i["url"] for k in ("existing_solutions", "paying_signals", "willingness_to_pay_signals", "workaround_signals") for i in out[k]}
+    assert not any("/hn/31" in u or "/hn/32" in u for u in urls)
+    assert all(i.get("supporting_sentence") for i in out["paying_signals"] + out["workaround_signals"])
     assert "validation_guide" in out
 
 
@@ -1109,7 +1126,7 @@ def test_reddit_oauth_handshake_and_community_fit_the_default_reddit_budget(monk
     monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret")
     monkeypatch.setitem(S._reddit_token, "value", "")
     monkeypatch.setitem(S._reddit_token, "exp", 0.0)
-    assert research.provider_budget("reddit") == 6
+    assert research.provider_budget("reddit") == 8
     jobs = research.plan("elder care", "quick", lens="policy", region={"name": "India", "code": "IN", "subreddits": ["india", "IndianStudents"]})
     selected = research._limit_jobs(jobs)
     reddit_jobs = [j for j in selected if research.SOURCE_PROVIDER_GROUP.get(j.source, j.source) == "reddit"]
@@ -1295,14 +1312,169 @@ def test_candidates_are_wide_but_drop_passing_mentions(monkeypatch):
     assert all({"id", "title", "snippet", "url", "source", "kind", "topic_in"} <= set(c) for c in out["candidates"])
     ids = {c["id"] for c in out["candidates"]}
     for cl in out["problem_clusters"]:
-        assert set(cl["candidate_ids"]) <= ids and cl["confidence"] in {"low", "medium", "high"}
+        assert set(cl["candidate_ids"]) <= ids and cl["evidence_strength"] in {"weak", "moderate", "strong"}
     assert all("author" not in c for c in out["candidates"])           # handles stay hidden
 
 
-def test_cluster_trend_and_layers():
-    assert research._trend(["2019", "2020"]) == "unknown"
-    assert research._trend(["2016", "2017", "2018"]) == "older_only"
+def test_cluster_recency_describes_the_sample_and_layers_are_mapped():
+    assert research._recency([]) == {"first": None, "last": None, "posts_in_last_2_years": 0, "of": 0}
     this = time.gmtime().tm_year
-    assert research._trend([str(this), str(this - 1), "2015"]) == "recent"
-    assert research._trend([str(this), "2015", "2016"]) == "ongoing"
+    rec = research._recency([str(this), str(this - 1), "2015", "bad"])
+    assert rec == {"first": 2015, "last": this, "posts_in_last_2_years": 2, "of": 3}
     assert research.EVIDENCE_LAYER["fda_devices"] == "official_data" and research.EVIDENCE_LAYER["arxiv"] == "research_interest"
+
+
+def test_viral_posts_do_not_outrank_a_quiet_first_hand_report():
+    viral = P("reddit", 10, "Elder care home surprise goes viral", "Wholesome clip of elder care workers dancing.", "v1", score=90000, comments=2000, site="pics")
+    real = P("reddit", 11, "Elder care paperwork is a nightmare, anyone know a tool?", "I am struggling to manage my father's elder care bills and forms. Is there a tool? This is so frustrating.", "r1", score=4, comments=3, site="eldercare")
+    cands = research._candidates([viral, real], ["elder care"])
+    assert [p.id for _, p, _ in cands][0] == real.id
+
+
+def test_cluster_requires_enough_shared_terms():
+    a = P("reddit", 20, "Elder care billing confusion", "Insurance billing statements are confusing and hard to dispute for my parents.", "a")
+    b = P("hn", 21, "Starting a business in France", "Registering a company in France needs many steps and forms.", "b")
+    cands = [(1.0, a, "title"), (1.0, b, "title")]
+    assert research._problem_clusters(cands, "elder care") == []
+
+
+from radar import verify  # noqa: E402
+
+
+def test_research_results_are_registered_and_cache_rehydrates():
+    out = research.research("quickbooks invoices", force=True)
+    verify._index.clear()
+    out = research.research("quickbooks invoices", force=True)
+    url = out["candidates"][0]["url"]
+    assert verify._norm(url) in verify._index
+    verify._index.clear()
+    again = research.research("quickbooks invoices")
+    assert again["from_cache"] and verify._norm(url) in verify._index
+
+
+def test_payload_states_who_is_missed():
+    out = research.research("quickbooks invoices", force=True, region="India")
+    rr = out["representation_risk"]
+    assert "hn" in rr["who_is_heard"] and "India" in rr["who_is_missed"] and "prefer official" in rr["so"]
+
+
+def test_region_pack_points_to_documented_sources_without_claiming_to_query_them():
+    out = research.research("crop insurance claims", force=True, region="India")
+    pack = out["region_pack"]
+    names = {s["name"] for s in pack["documented_evidence_lives_here"]}
+    assert {"PMFBY", "data.gov.in"} <= names and "agriculture" in pack["topic_areas"]
+    assert all(not s["queried_by_server"] and not s["checked"] for s in pack["documented_evidence_lives_here"])
+    assert "mandi" in " ".join(pack["local_wording_to_try"]["agriculture"])
+    assert "DOCUMENTED" in pack["how_to_use"]
+
+
+def test_no_pack_means_no_pretending():
+    assert "region_pack" not in research.research("crop insurance claims", force=True)             # no region: the server never guesses one
+    assert "region_pack" not in research.research("crop insurance claims", force=True, region="Kenya")  # no pack yet for Kenya
+
+
+def test_reddit_content_is_not_written_to_disk_but_other_sources_are(tmp_path):
+    out = research.research("quickbooks invoices", force=True)
+    out["candidates"].append({"id": "cx", "title": "r", "snippet": "s", "url": "https://www.reddit.com/r/x/comments/abc/t/", "source": "reddit/x"})
+    out["top_posts"].append({"title": "r", "snippet": "s", "url": "https://www.reddit.com/r/x/comments/abc/t/", "source": "reddit/x"})
+    disk = research._without_reddit_content(out)
+    assert not any(str(x["source"]).startswith("reddit") for x in disk["candidates"] + disk["top_posts"])
+    assert any(x["source"] == "hn" for x in disk["candidates"])        # other sources are kept
+    assert disk["persisted_note"] and disk["posts_fetched"] == out["posts_fetched"]  # counts survive
+    assert any(str(x["source"]).startswith("reddit") for x in out["candidates"])      # memory copy untouched
+
+
+def test_voices_count_only_distinct_people_and_never_missing_handles():
+    a = P("hn", 40, "Assisted living fees keep rising", "assisted living facility fees keep rising for my mother every year", "same")
+    b = P("hn", 41, "Assisted living fees are unfair", "assisted living facility fees are unfair and rising for families each year", "same")
+    c = P("reddit", 42, "Assisted living facility fees", "assisted living facility fees rising each year for my parents", "")
+    paper = P("scholar", 43, "Assisted living facility fees and family burden", "assisted living facility fees rising each year family burden", "")
+    cl = research._problem_clusters([(1, x, "title") for x in (a, b, c, paper)], "elder care")
+    assert cl and cl[0]["voices"] == 1                      # one handle posted twice; blank handle and the paper add no voices
+    assert cl[0]["evidence_strength"] == "weak"             # one person plus a paper is a lead, not corroboration
+    assert "research_interest" in cl[0]["evidence_layers"] and "recency_in_sample" in cl[0]
+
+
+def test_evidence_strength_rule():
+    def cluster(posts):
+        return research._problem_clusters([(1, p, "title") for p in posts], "elder care")[0]
+    body = "assisted living facility fees rising each year for families"
+    titles = ["Assisted living facility fees keep climbing", "Why does my mother's facility raise its price yearly", "Anyone else priced out of senior housing"]
+    three = [P("hn", 50 + i, titles[i], body, f"user{i}") for i in range(3)]
+    assert cluster(three)["evidence_strength"] == "moderate"                       # 3 handles, one kind of evidence
+    paper = P("scholar", 60, "Assisted living facility fees", body, "")
+    assert cluster(three + [paper])["evidence_strength"] == "strong"               # 3 handles plus a second kind
+    two = three[:2]
+    assert cluster(two + [paper])["evidence_strength"] == "moderate"               # 2 handles plus a second kind
+    assert cluster(two)["evidence_strength"] == "weak"
+
+
+def test_existing_solutions_are_supply_not_demand(monkeypatch):
+    post = P("hn", 70, "Quickbooks invoices reconciliation alternative", "We built a saas alternative plugin for quickbooks invoices reconciliation, a good option.", "vendor")
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: ([post], {"hn": {"state": "ok", "posts": 1}, "reddit": {"state": "ok", "posts": 0}}))
+    out = research.validate("quickbooks invoices reconciliation", "accounting")
+    assert out["counts"]["existing_solutions"] >= 1
+    assert out["evidence_status"] == "insufficient_evidence"        # a competitor existing is not evidence anyone wants this
+    assert out["demand_evidence"] == {"behaviour": 0, "stated_intent_only": 0}
+    assert "gap is narrower" in out["evidence_note"] and "supply" in out["how_to_read"]
+
+
+def test_stated_intent_is_counted_separately_from_behaviour(monkeypatch):
+    posts = [P("hn", 71 + i, "Quickbooks invoices reconciliation", "I would pay $10 a month for quickbooks invoices reconciliation that works.", f"u{i}") for i in range(3)]
+    monkeypatch.setattr(research, "run_jobs", lambda jobs: (posts, {"hn": {"state": "ok", "posts": 3}, "reddit": {"state": "ok", "posts": 0}}))
+    out = research.validate("quickbooks invoices reconciliation", "accounting")
+    assert out["demand_evidence"]["behaviour"] == 0 and out["demand_evidence"]["stated_intent_only"] >= 1
+
+
+def test_solved_ignores_generic_words_far_from_the_topic_and_flags_tiny_repos(monkeypatch):
+    from radar import solved
+    far = P("hn", 80, "Accounting reconciliation pain", "Reconciliation of invoices is painful. " + "x " * 40 + "Our customer service is slow and the product is late.", "a")
+    near = P("hn", 81, "Show HN: invoice reconciliation", "Show HN: an open source tool for invoice reconciliation that syncs quickbooks.", "b")
+    tiny = S.Post("github_repo", "gh-1", "invoice-reconciliation", "invoice reconciliation script", "https://github.com/x/y", "x", 3, 0, "2026-01-01", {"archived": False})
+    monkeypatch.setattr(solved, "run_jobs", lambda jobs: ([far, near, tiny], {"hn": {"state": "ok"}, "github_repo": {"state": "ok"}}))
+    out = solved.check("invoice reconciliation", "software")
+    titles = [d["name"] if "name" in d else d["title"] for d in out["products_and_discussion"]]
+    assert "Show HN: invoice reconciliation" in titles and "Accounting reconciliation pain" not in titles
+    assert all(d["solution_sentence"] for d in out["products_and_discussion"])
+    assert "basis" in out["assessment"]
+    only_tiny = solved.assess([{"name": "t", "url": "u", "description": "", "stars": 3, "last_push": "2026-01-01", "archived": False, "language": ""}], [], [], "software")
+    assert only_tiny["hint"] == "weak_related_work_only"
+
+
+def test_hunt_is_honest_about_its_seeds_weights_and_ties():
+    from radar import hunt
+    assert "not findings" in hunt.explore_domains("health")["note"]
+    plan = hunt.plan_hunt(goal="hackathon", interests=["elder care"], skills=["research"])
+    assert "not a validated model" in plan["rubric_note"]
+    assert hunt._lens_from(["python", "arduino"], "any") == "any"          # a tie is no signal
+    assert hunt._lens_from(["python", "react"], "any") == "software"
+
+
+def test_idioms_with_pay_are_not_payment_evidence():
+    for text in ("I need to pay attention to my mother's medication", "we pay our respects every year", "a chance to pay it forward"):
+        assert not research.PAYMENT_EVIDENCE.search(text), text
+    for text in ("I pay $30 a month for it", "we paid a freelancer to fix the invoices", "they pay their farmhands daily"):
+        assert research.PAYMENT_EVIDENCE.search(text), text
+
+
+def test_viral_story_subreddits_are_not_candidates_unless_first_hand():
+    story = S.Post("reddit", "v1", "TIL a care home for elder care in Dutch town lets students live free", "elder care home story, so cool",
+                   "https://reddit.com/r/todayilearned/x", "", 50000, 900, "2017-01-01", {"subreddit": "todayilearned"})
+    ask = S.Post("reddit", "v2", "How do I handle elder care for my dad, I'm struggling", "I wish there was help with elder care, I'm exhausted and struggling",
+                 "https://reddit.com/r/lifeprotips/y", "", 10, 5, "2025-01-01", {"subreddit": "lifeprotips"})
+    got = [p.id for _, p, _ in research._candidates([story, ask], ["elder care"])]
+    assert "v1" not in got
+
+
+def test_shortened_query_variant_keeps_the_narrowing_modifier():
+    assert "crop insurance" in pain.query_variants("crop insurance claims")
+    assert "insurance claims" not in pain.query_variants("crop insurance claims")
+
+
+def test_crossposted_story_counts_as_one_voice():
+    mk = lambda i, a, sub, t: {"id": i, "title": t, "text": "", "author": a, "url": "u" + i, "source": "reddit/" + sub,
+                               "score": 1, "comments": 1, "created": "2025-01-01"}
+    posts = [S.Post("reddit", "a", "Elon Musk kicked daughter off health insurance", "health insurance daughter Musk kicked story", "u1", "alice", 1, 1, "2025-01-01", {}),
+             S.Post("reddit", "b", "Elon Musk kicked estranged daughter off health insurance", "health insurance daughter Musk kicked story", "u2", "bob", 1, 1, "2025-01-02", {})]
+    out = research._problem_clusters([(1.0, p, "title") for p in posts], "insurance")
+    assert all(c["voices"] <= 1 for c in out)
