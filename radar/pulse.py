@@ -8,6 +8,7 @@ census of current problems, and it says that in its output.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -19,6 +20,9 @@ PULSE_FILE = Path(__file__).resolve().parent.parent / "data" / "pulse.json"
 STALE_AFTER = 3 * 86400
 FIRST_HAND = {"help_request", "reported_complaint", "workaround_or_manual_process", "technical_failure_report"}
 _mem: dict = {"at": 0.0, "data": None}
+# Posts about one person's mental state or a dream are not product problems, and a public feed should not spotlight them.
+PERSONAL = re.compile(r"\b(?:depress\w*|suicid\w*|self[- ]harm|lonel\w+|rotting|burn(?:ed|t)? out|panic attack\w*|anxiety|grief|my (?:wife|husband|mother|father|son|daughter) died)\b"
+                      r"|\b(?:i had a dream|last night,? i had a dream|my dream)\b", re.I)
 
 
 def _hn_asks(days: int) -> tuple[list[dict], dict]:
@@ -32,6 +36,8 @@ def _hn_asks(days: int) -> tuple[list[dict], dict]:
         title = h.get("title") or ""
         text = S._plain(h.get("story_text"))
         if not title:
+            continue
+        if PERSONAL.search(f"{title} {text}"):
             continue
         kind = signal_profile(f"{title} {text}")["evidence_kind"]
         if kind not in FIRST_HAND and not looks_like_pain(f"{title} {text}"):

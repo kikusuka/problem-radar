@@ -699,5 +699,5 @@ def enabled() -> dict:
         "fda_devices": {"enabled": True, "note": "FDA device failure reports (openFDA), US; no key; set OPENFDA_KEY (free) for more quota"},
         "reddit_community": {"enabled": True, "note": "finds the subreddits for a topic, then reads their top complaints"},
         "github": {"enabled": True, "note": "token set" if os.environ.get("GITHUB_TOKEN") else "no token: low rate limit"},
-        "gdelt": {"enabled": True, "note": "recent news (about the last 3 months, many languages); no key; shows what is in the public eye now; not yet confirmed against the live service"},
+        "gdelt": {"enabled": False, "note": "recent news (about the last 3 months, many languages); no key. Off by default: it returned nothing on the live server, so it is opt-in with sources=[\"gdelt\"] until confirmed"},
     }

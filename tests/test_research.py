@@ -1486,3 +1486,22 @@ def test_job_ads_are_not_evidence():
     real = S.Post("reddit", "r1", "Crop insurance claim denied after hail, what now", "my crop insurance claim was denied after hail",
                   "https://reddit.com/r/farming/r1", "farmer", 5, 4, "2026-01-01", {"subreddit": "farming"})
     assert [p.id for p in research._dedupe([ad, real])] == ["r1"]
+
+
+def test_region_without_local_terms_gets_a_hint_and_with_them_does_not():
+    assert "local_terms_hint" in research.research("accounting invoices", region="India", force=True)
+    assert "local_terms_hint" not in research.research("accounting invoices", region="India", also=["GST invoice"], force=True)
+    assert "local_terms_hint" not in research.research("accounting invoices", force=True)  # no region, no hint
+
+
+def test_founder_pitches_are_marked_and_ranked_below_real_reports():
+    assert research._is_pitch("Would You Use an Automated Invoice Reminder Tool for Overdue Payments?")
+    assert research._is_pitch("I spent 2 hours researching freelance late payments")
+    assert research._is_pitch("Found a validated problem (85% of freelancers paid late) - considering building")
+    assert not research._is_pitch("How do you deal with late-paying clients and unpaid invoices?")
+    mk = lambda i, t, text: S.Post("reddit", i, t, text, "https://reddit.com/r/x/" + i, "u" + i, 5, 3, "2026-01-01", {"subreddit": "freelance"})
+    pitch = mk("p", "Would you use an invoice reminder tool for late payments?", "late payments invoice reminder tool, would you pay for it")
+    real = mk("r", "My client is 60 days late paying my invoice, what now", "late payments are killing me, I chase every invoice by hand, struggling")
+    ranked = research._candidates([pitch, real], ["late payments invoice"])
+    assert ranked[0][1].id == "r"
+    assert research._candidate_view(1, pitch, "title").get("pitch") is True

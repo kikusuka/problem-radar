@@ -63,7 +63,9 @@ def check(brief: dict) -> dict:
     checked = verify.check_claims(claims) if claims else {"claims": []}
     labels = {e["claim"]: str(e.get("label", "")).upper() for e in ev if isinstance(e, dict) and e.get("claim")}
     for r in checked.get("claims", []):
-        documented = labels.get(r["claim"]) == "DOCUMENTED"
+        url = (r.get("citations") or [{}])[0].get("url", "")
+        # Only an official page or paper may be "read elsewhere"; a post link this server never returned is suspect whatever its label.
+        documented = labels.get(r["claim"]) == "DOCUMENTED" and not any(_host(url).endswith(h) for h in POST_HOSTS)
         if r["status"] == "url_not_retrieved":
             # An official page or paper read with another tool is expected to be unknown here; a missing post link is not.
             (warnings if documented else problems).append(

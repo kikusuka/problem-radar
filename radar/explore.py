@@ -27,7 +27,9 @@ def people_say(views: list[dict], niche: str, searched: list[str], n: int = 8) -
     """Words and word pairs that recur across different posts and are not already in the query: the community's own vocabulary."""
     skip = keywords(" ".join([niche, *searched]))
     df: Counter = Counter()
-    for v in views:
+    # Words from posts only loosely about the topic (a car-accident claim for a crop-insurance search) would send the next search off-topic.
+    on_topic = [v for v in views if v.get("topic_in") == "title"]
+    for v in (on_topic if len(on_topic) >= 4 else views):
         body = clean(f"{v['title']} {v['snippet']}")
         toks = re.findall(r"[a-z][a-z0-9\-\+#]{2,}", body.lower()) if body.isascii() else [t for t in tokens(body) if len(t) > 2 or has_unspaced(t)]
         uni = {t for t in toks if t in keywords(t) and t not in skip}

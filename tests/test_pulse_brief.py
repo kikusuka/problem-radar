@@ -83,3 +83,20 @@ def test_brief_ok_when_complete_and_supported():
     out = brief.check({**GOOD, "evidence": ev})
     assert out["ok"], out
     assert any("no DOCUMENTED" in w for w in out["warnings"])
+
+
+def test_invented_post_link_is_a_problem_even_when_wrongly_labelled_documented():
+    ev = [{"claim": "Freelancers chase clients by hand", "url": "https://www.reddit.com/r/invented/comments/zzz/none/", "label": "DOCUMENTED"}]
+    out = brief.check({**GOOD, "evidence": ev})
+    assert any("never returned" in p for p in out["problems"])
+
+
+def test_feed_skips_personal_distress_and_dreams(monkeypatch, tmp_path):
+    monkeypatch.setattr(pulse, "PULSE_FILE", tmp_path / "p.json")
+    pulse._mem.update(at=0.0, data=None)
+    hits = [{"title": "Ask HN: I need advice", "story_text": "I was laid off and I have been rotting, struggling and lonely", "objectID": "1", "num_comments": 30, "created_at": "2026-10-20T00:00:00Z"},
+            {"title": "Tell HN: Last night, I had a dream", "story_text": "I had a dream about my database, struggling with typos", "objectID": "2", "num_comments": 5, "created_at": "2026-10-20T00:00:00Z"},
+            {"title": "Ask HN: How do you handle late invoices? I'm struggling", "story_text": "chasing invoices wastes my hours", "objectID": "3", "num_comments": 8, "created_at": "2026-10-20T00:00:00Z"}]
+    monkeypatch.setattr(S, "_get", lambda url, params=None, **k: ({"hits": hits}, "") if "algolia" in url else ({"data": []}, ""))
+    titles = [i["title"] for i in pulse.find("")["matches"]]
+    assert titles == ["Ask HN: How do you handle late invoices? I'm struggling"]
