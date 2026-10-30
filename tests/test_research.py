@@ -1505,3 +1505,11 @@ def test_founder_pitches_are_marked_and_ranked_below_real_reports():
     ranked = research._candidates([pitch, real], ["late payments invoice"])
     assert ranked[0][1].id == "r"
     assert research._candidate_view(1, pitch, "title").get("pitch") is True
+
+
+def test_top_posts_mark_pitches_and_list_them_last():
+    out = research.research("quickbooks invoices", force=True)
+    flags = [bool(p.get("pitch")) for p in out["top_posts"]]
+    assert flags == sorted(flags)  # False first, then True
+    p = S.Post("reddit", "pp", "Show HN: invoice reminder tool", "invoice reminder tool for quickbooks invoices", "https://x/pp", "a", 1, 1, "2026-01-01", {})
+    assert research._compact(p, 0.9, "invoice reminder tool for quickbooks invoices").get("pitch") is True

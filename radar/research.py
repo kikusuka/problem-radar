@@ -468,6 +468,7 @@ def _compact(p: S.Post, rel: float, text: str) -> dict:
         "score": p.score,
         "comments": p.comments,
         "relevance": round(rel, 2),
+        **({"pitch": True} if _is_pitch(p.title) else {}),
         "signals": signals(text),
         "signal_evidence": {
             "counts": profile["counts"],
@@ -997,6 +998,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     ranked, misses = _rank(raw, [niche] + also)
     kept = [p for _, p, _, _ in ranked]
     ranked = _diversify(ranked, limit)
+    ranked.sort(key=lambda r: _is_pitch(r[1].title))  # stable: founders presenting their own product go after independent reports
     cands = _candidates(raw, [niche] + also)
     payload = {
         "niche": niche,

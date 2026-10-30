@@ -100,3 +100,9 @@ def test_feed_skips_personal_distress_and_dreams(monkeypatch, tmp_path):
     monkeypatch.setattr(S, "_get", lambda url, params=None, **k: ({"hits": hits}, "") if "algolia" in url else ({"data": []}, ""))
     titles = [i["title"] for i in pulse.find("")["matches"]]
     assert titles == ["Ask HN: How do you handle late invoices? I'm struggling"]
+
+
+def test_feed_filter_catches_more_personal_wellbeing_posts():
+    for t in ("Ask HN: Imposter Syndrome Resources", "Ask HN: Help My Sanity", "Ask HN: I Need Advice", "Ask HN: mental health tools for devs?"):
+        assert pulse.PERSONAL.search(t), t
+    assert not pulse.PERSONAL.search("Ask HN: How do you handle late client payments?")

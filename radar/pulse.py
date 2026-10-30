@@ -22,7 +22,8 @@ FIRST_HAND = {"help_request", "reported_complaint", "workaround_or_manual_proces
 _mem: dict = {"at": 0.0, "data": None}
 # Posts about one person's mental state or a dream are not product problems, and a public feed should not spotlight them.
 PERSONAL = re.compile(r"\b(?:depress\w*|suicid\w*|self[- ]harm|lonel\w+|rotting|burn(?:ed|t)? out|panic attack\w*|anxiety|grief|my (?:wife|husband|mother|father|son|daughter) died)\b"
-                      r"|\b(?:i had a dream|last night,? i had a dream|my dream)\b", re.I)
+                      r"|\b(?:i had a dream|last night,? i had a dream|my dream)\b"
+                      r"|\bimpost[eo]r\b|\bmental health\b|\btherap(?:y|ist|ists)\b|\b(?:my|help my) sanity\b|\bi need advice\b", re.I)
 
 
 def _hn_asks(days: int) -> tuple[list[dict], dict]:
