@@ -1532,3 +1532,23 @@ def test_auto_terms_are_used_only_when_caller_passes_none_and_are_reported():
     assert "PMFBY" in out["searched_terms"]
     mine = research.research("crop insurance claims", region="India", also=["kisan bima"], force=True)
     assert "auto_local_terms" not in mine and "kisan bima" in mine["searched_terms"]
+
+
+def test_posts_lacking_the_narrowing_word_are_ranked_lower_and_flagged():
+    mk = lambda i, t, x: S.Post("reddit", i, t, x, "https://reddit.com/r/x/" + i, "u" + i, 5, 3, "2026-01-01", {"subreddit": "x"})
+    on = mk("a", "Crop insurance claim rejected after hail", "my crop insurance claim was rejected after hail damage, farmers struggle")
+    off = mk("b", "Health insurance claim rejected", "my health insurance claim was rejected and the insurer will not pay, claims are a struggle")
+    ranked = research._candidates([off, on], ["crop insurance claims"])
+    assert ranked[0][1].id == "a"
+    views = {p.id: research._candidate_view(1, p, w, ["crop insurance claims"]) for _, p, w in ranked}
+    assert views["b"].get("partial_match") is True and "partial_match" not in views["a"]
+    # a one-word topic has no separate modifier, and a synonym term that fits fully rescues the post
+    assert not research._lacks_modifier(["invoices"], "anything")
+    assert not research._lacks_modifier(["crop insurance claims", "PMFBY claim"], "pmfby claim delay")
+
+
+def test_one_word_synonym_rescues_only_posts_that_contain_it():
+    terms = ["crop insurance claims", "PMFBY"]
+    assert research._lacks_modifier(terms, "my health insurance claim was rejected")      # not rescued by an unrelated synonym
+    assert not research._lacks_modifier(terms, "pmfby payout delayed for months")          # rescued: contains the synonym
+    assert not research._lacks_modifier(terms, "crop insurance claim rejected")            # has the modifier

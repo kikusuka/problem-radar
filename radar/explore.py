@@ -28,8 +28,8 @@ def people_say(views: list[dict], niche: str, searched: list[str], n: int = 8) -
     skip = keywords(" ".join([niche, *searched]))
     df: Counter = Counter()
     # Words from posts only loosely about the topic (a car-accident claim for a crop-insurance search) would send the next search off-topic.
-    on_topic = [v for v in views if v.get("topic_in") == "title"]
-    for v in (on_topic if len(on_topic) >= 4 else views):
+    on_topic = [v for v in views if v.get("topic_in") == "title" and not v.get("partial_match")]
+    for v in (on_topic if len(on_topic) >= 4 else [v for v in views if not v.get('partial_match')] or views):
         body = clean(f"{v['title']} {v['snippet']}")
         toks = re.findall(r"[a-z][a-z0-9\-\+#]{2,}", body.lower()) if body.isascii() else [t for t in tokens(body) if len(t) > 2 or has_unspaced(t)]
         uni = {t for t in toks if t in keywords(t) and t not in skip}
