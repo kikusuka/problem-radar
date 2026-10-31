@@ -48,6 +48,36 @@ PACKS = {
     },
 }
 
+# Local names that fit a SUB-topic, so a search is helped and not polluted ("mandi" would flood a crop-insurance search).
+# Used only when the caller passed no local wording of its own. Each entry: (words in the niche that trigger it, terms to add).
+TOPIC_TERMS = {
+    "IN": {
+        "agriculture": [(r"insur|claim|crop loss|compensat", ["PMFBY", "fasal bima"]),
+                        (r"price|sell|market|mandi|msp", ["mandi price", "MSP"]),
+                        (r"loan|credit|debt", ["Kisan Credit Card", "farm loan waiver"])],
+        "elder care": [(r".", ["old age home", "senior citizens"])],
+        "health": [(r"insur|claim|bill|cost", ["Ayushman Bharat"]), (r"rural|village|clinic|doctor", ["PHC primary health centre", "ASHA worker"])],
+        "education": [(r"scholar|fee|fund", ["scholarship portal"]), (r"exam|board|coach|test", ["board exams", "coaching"])],
+        "transport": [(r"road|pothole|traffic", ["potholes"]), (r"bus|pass|commut", ["bus pass"])],
+    },
+}
+
+
+def auto_terms(region: dict | None, niche: str, limit: int = 2) -> list[str]:
+    """Curated local wording that fits the niche's sub-topic, or [] when none is known. Never guesses outside a known pack."""
+    if not region or region.get("code") not in TOPIC_TERMS:
+        return []
+    out: list[str] = []
+    table = TOPIC_TERMS[region["code"]]
+    for dom in domains_of(niche):
+        for trigger, terms in table.get(dom, []):
+            if re.search(trigger, niche, re.I):
+                out += [t for t in terms if t.casefold() not in niche.casefold() and t not in out]
+        if out:
+            break
+    return out[:limit]
+
+
 DOMAIN_WORDS = {
     "agriculture": r"agri|farm|crop|mandi|harvest|irrigat|fertili[sz]|seed|livestock|dairy|kisan|soil",
     "elder care": r"elder|senior|aged|ageing|aging|old age|dementia|geriatric",

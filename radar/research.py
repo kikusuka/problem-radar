@@ -988,6 +988,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
             hit["analysis_guide"] = build_guide(lens, goal)
             return hit
 
+    auto = PK.auto_terms(reg, niche) if (reg and not also) else []
+    if auto:  # the caller gave no local wording: use curated names for this sub-topic rather than searching in plain English only
+        also = auto
     jobs = plan(niche, depth, sources, se_sites, lens, also, reg)
     budgeted_jobs = _limit_jobs(jobs, MAX_JOBS_PER_REQUEST)
     budgeted_provider_requests = sum(SOURCE_REQUEST_COST.get(j.source, 1) for j in budgeted_jobs)
@@ -1069,6 +1072,8 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     pack = PK.pack_for(reg, niche, also)
     if pack:
         payload["region_pack"] = pack
+    if auto:
+        payload["auto_local_terms"] = {"terms": auto, "note": "No local wording was passed, so these curated local names were added to the search. Pass your own in `also` to replace them."}
     if reg and not also:
         payload["local_terms_hint"] = ("A region was set but no local wording was passed. Search results improve a lot when you pass the local names of schemes, "
                                        "apps, laws and words people use in `also` (for example the scheme's acronym and its local-language name), then re-run.")

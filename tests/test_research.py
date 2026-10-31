@@ -1513,3 +1513,22 @@ def test_top_posts_mark_pitches_and_list_them_last():
     assert flags == sorted(flags)  # False first, then True
     p = S.Post("reddit", "pp", "Show HN: invoice reminder tool", "invoice reminder tool for quickbooks invoices", "https://x/pp", "a", 1, 1, "2026-01-01", {})
     assert research._compact(p, 0.9, "invoice reminder tool for quickbooks invoices").get("pitch") is True
+
+
+def test_india_crop_insurance_gets_curated_local_terms_but_not_mandi():
+    from radar import packs
+    reg = R_.resolve("India")
+    assert packs.auto_terms(reg, "crop insurance claims") == ["PMFBY", "fasal bima"]
+    assert "mandi price" not in packs.auto_terms(reg, "crop insurance claims")
+    assert packs.auto_terms(reg, "mandi price transparency") == ["MSP"]  # a term already in the niche is not added again
+    assert packs.auto_terms(reg, "elder care at home") == ["old age home", "senior citizens"]
+    assert packs.auto_terms(reg, "crop insurance claims") and not packs.auto_terms(R_.resolve("Kenya"), "crop insurance claims")
+    assert not packs.auto_terms(reg, "accounting invoices")  # no known sub-topic: add nothing
+
+
+def test_auto_terms_are_used_only_when_caller_passes_none_and_are_reported():
+    out = research.research("crop insurance claims", region="India", force=True)
+    assert out["auto_local_terms"]["terms"] == ["PMFBY", "fasal bima"] and "local_terms_hint" not in out
+    assert "PMFBY" in out["searched_terms"]
+    mine = research.research("crop insurance claims", region="India", also=["kisan bima"], force=True)
+    assert "auto_local_terms" not in mine and "kisan bima" in mine["searched_terms"]
