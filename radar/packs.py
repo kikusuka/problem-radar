@@ -59,7 +59,7 @@ TOPIC_TERMS = {
         "health": [(r"insur|claim|bill|cost", ["Ayushman Bharat"]), (r"rural|village|clinic|doctor", ["PHC primary health centre", "ASHA worker"])],
         "education": [(r"scholar|fee|fund", ["National Scholarship Portal", "scholarship portal"]), (r"exam|board|coach|test", ["board exams", "coaching"])],
         "money": [(r"vendor|street|stall|payment|upi|qr", ["UPI QR code", "PM SVANidhi"]), (r"loan|credit", ["Mudra loan", "microfinance"])],
-        "housing": [(r"hostel|mess|dorm", ["hostel warden", "mess committee"]), (r"rent|tenant|deposit|landlord", ["rent agreement", "broker deposit"])],
+        "housing": [(r"rent|tenant|deposit|landlord", ["rent agreement", "broker deposit"])],
         "transport": [(r"road|pothole|traffic", ["potholes"]), (r"bus|pass|commut", ["bus pass"])],
     },
     "KE": {

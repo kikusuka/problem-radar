@@ -612,7 +612,8 @@ def _is_thin(p: "S.Post") -> bool:
 
 
 _FIRST_PERSON = re.compile(r"\b(?:we|i|our|my|me)\b.{0,120}\b(?:found|got|paid|pay|stuck|waiting|waited|refus\w+|denied|rejected|delay\w*|complain\w*|"
-                           r"lost|charged|cannot|can't|couldn't|unable|struggl\w+|ignored|withh[eo]ld|withheld|never\s+(?:got|received|came))\b", re.I | re.S)
+                           r"lost|charged|cannot|can't|couldn't|unable|struggl\w+|ignored|withh[eo]ld|withheld|never\s+(?:got|received|came)|"
+                           r"paying|fed|served|sick|disgust\w*|rotten|insects?|worms?|making me)\b", re.I | re.S)
 
 
 def _first_person(p: "S.Post") -> bool:
@@ -659,7 +660,7 @@ def _candidates(posts: list[S.Post], terms: list[str], limit: int = CANDIDATE_LI
                  - (2.5 if _is_pitch(p.title) else 0)
                  - (2.5 if p.source not in STRUCTURED and p.source not in PAPERS and _lacks_modifier(topic_terms, early) else 0)
                  - (3 if sub in VIRAL_SUBREDDITS else 0)
-                 - (1.5 if _is_thin(p) else 0))
+                 - (1.5 if _is_thin(p) and not _first_person(p) else 0))
         pool.append((score, p, "title" if title_hit else "opening"))
     pool.sort(key=lambda x: x[0], reverse=True)
     pool = _diversify(pool, limit)  # no source fills more than ~40%
@@ -676,7 +677,7 @@ def _candidate_view(i: int, p: S.Post, where: str, terms: list[str] | None = Non
         out["promotional"] = True
     if terms and p.source not in STRUCTURED and p.source not in PAPERS and _lacks_modifier(terms, clean(f"{p.title} {(p.text or '')[:400]}")):
         out["partial_match"] = True  # about the broader subject: it lacks the topic's narrowing word (e.g. "crop" in "crop insurance claims")
-    if _is_thin(p):
+    if _is_thin(p) and not _first_person(p):
         out["thin"] = True  # no body text to judge: a photo, a one-liner or a repeated title
     if _first_person(p) and not _is_pitch(p.title):
         out["first_person"] = True  # the writer says it happened to them, even when `kind` reads as general discussion

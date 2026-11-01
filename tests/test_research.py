@@ -1583,3 +1583,16 @@ def test_region_hits_and_lead_posts_are_reported():
     if out["region_hits"]["candidates_naming_region"] == 0:
         assert "warning" in out["region_hits"]
     assert "lead_posts" not in out or all(i.startswith("c") for i in out["lead_posts"]["ids"])
+
+
+def test_first_person_catches_paying_and_sick_and_thin_skips_them():
+    mk = lambda i, t, b: S.Post("reddit", i, t, b, f"https://x/{i}", "a", 1, 1, "2026-01-01", {})
+    assert research._first_person(mk("a", "Mess exposed", "we are paying fees and the food is rotten"))
+    assert research._first_person(mk("b", "Hostel food is making me sick", "I am only eating mess food"))
+    from radar import packs, regions as R_
+    assert "hostel warden" not in packs.auto_terms(R_.resolve("India"), "college hostel mess food quality")
+
+
+def test_hostel_food_search_gets_no_automatic_warden_term():
+    from radar import packs
+    assert packs.auto_terms(R_.resolve("India"), "college hostel mess food quality") == []  # "hostel warden" pulled crime news, not food complaints
