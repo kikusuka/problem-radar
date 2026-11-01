@@ -1523,6 +1523,7 @@ def test_india_crop_insurance_gets_curated_local_terms_but_not_mandi():
     assert packs.auto_terms(reg, "mandi price transparency") == ["MSP"]  # a term already in the niche is not added again
     assert packs.auto_terms(reg, "elder care at home") == ["old age home", "senior citizens"]
     assert packs.auto_terms(reg, "crop insurance claims") and not packs.auto_terms(R_.resolve("Kenya"), "crop insurance claims")
+    assert packs.auto_terms(R_.resolve("Kenya"), "bus tracking") == ["matatu"]
     assert not packs.auto_terms(reg, "accounting invoices")  # no known sub-topic: add nothing
 
 
@@ -1552,3 +1553,33 @@ def test_one_word_synonym_rescues_only_posts_that_contain_it():
     assert research._lacks_modifier(terms, "my health insurance claim was rejected")      # not rescued by an unrelated synonym
     assert not research._lacks_modifier(terms, "pmfby payout delayed for months")          # rescued: contains the synonym
     assert not research._lacks_modifier(terms, "crop insurance claim rejected")            # has the modifier
+
+
+def test_modifier_synonyms_game_subs_thin_and_first_person():
+    mk = lambda i, t, b, sub="x": S.Post("reddit", i, t, b, f"https://x/{i}", "a", 1, 1, "2026-01-01", {"subreddit": sub})
+    tenant = "Security deposit dispute: my landlord kept it and I cannot get it back from the tenant ledger"
+    assert research._lacks_modifier(["renters deposit disputes"], "deposit dispute with my landlord") is False  # landlord ~ renters
+    assert research._lacks_modifier(["farm irrigation water scheduling"], "lawn irrigation schedule help") is True
+    game = mk("g", "Irrigation problem, water is only going to the first 2 farm squares", "farm irrigation water scheduling in game", "Timberborn")
+    assert research._candidates([game], ["farm irrigation water scheduling"]) == []
+    assert research._is_thin(mk("t", "Hostel mess food", "Hostel mess food"))
+    assert not research._is_thin(mk("n", "Hostel mess food", "we found an insect in the rice and the warden refused to listen"))
+    assert research._first_person(mk("f", "Metal wire in hostel food", "we found it today and they refused to listen"))
+    assert not research._first_person(mk("h", "Hostel food guide", "a guide to hostel food"))
+
+
+def test_people_say_drops_url_and_filler_tokens():
+    from radar import explore
+    v = [{"title": "scholarship portal broken", "snippet": "https://preview.redd.it/x.webp?width=9 portal rejected my documents", "source": "reddit/a", "topic_in": "title"},
+         {"title": "portal rejected documents again", "snippet": "i've tried twice", "source": "reddit/b", "topic_in": "title"}] * 2
+    out = explore.people_say(v, "scholarship tracking", [])
+    assert "https" not in " ".join(out) and "preview" not in " ".join(out)
+    assert any("rejected" in o or "documents" in o for o in out)
+
+
+def test_region_hits_and_lead_posts_are_reported():
+    out = research.research("quickbooks invoices", region="Kenya", force=True)
+    assert out["region_hits"]["of"] == len(out["candidates"])
+    if out["region_hits"]["candidates_naming_region"] == 0:
+        assert "warning" in out["region_hits"]
+    assert "lead_posts" not in out or all(i.startswith("c") for i in out["lead_posts"]["ids"])

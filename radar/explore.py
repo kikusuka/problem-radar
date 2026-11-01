@@ -23,6 +23,11 @@ LAYERS = {
 READABLE_HOSTS = ("news.ycombinator.com", "www.reddit.com", "reddit.com", "old.reddit.com")
 
 
+_JUNK = {"https", "http", "www", "com", "link", "links", "preview", "redd", "webp", "auto", "width", "format", "png", "jpg", "jpeg", "amp", "couple",
+         "months", "month", "moving", "enough", "first", "news", "things", "thing", "really", "still", "also", "just", "like", "much", "time", "year", "years"}
+_URL = re.compile(r"https?://\S+|www\.\S+|\b\S+\.(?:com|org|net|in|io|it)/\S*", re.I)
+
+
 def people_say(views: list[dict], niche: str, searched: list[str], n: int = 8) -> list[str]:
     """Words and word pairs that recur across different posts and are not already in the query: the community's own vocabulary."""
     skip = keywords(" ".join([niche, *searched]))
@@ -30,9 +35,9 @@ def people_say(views: list[dict], niche: str, searched: list[str], n: int = 8) -
     # Words from posts only loosely about the topic (a car-accident claim for a crop-insurance search) would send the next search off-topic.
     on_topic = [v for v in views if v.get("topic_in") == "title" and not v.get("partial_match")]
     for v in (on_topic if len(on_topic) >= 4 else [v for v in views if not v.get('partial_match')] or views):
-        body = clean(f"{v['title']} {v['snippet']}")
+        body = _URL.sub(" ", clean(f"{v['title']} {v['snippet']}")).replace("’", "'")
         toks = re.findall(r"[a-z][a-z0-9\-\+#]{2,}", body.lower()) if body.isascii() else [t for t in tokens(body) if len(t) > 2 or has_unspaced(t)]
-        uni = {t for t in toks if t in keywords(t) and t not in skip}
+        uni = {t for t in toks if t in keywords(t) and t not in skip and t not in _JUNK and "'" not in t}
         bi = {f"{a} {b}" for a, b in zip(toks, toks[1:]) if a in uni and b in uni}
         df.update(uni | bi)
     ranked = [(t, c) for t, c in df.items() if c >= 2]

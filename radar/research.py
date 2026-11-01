@@ -568,8 +568,23 @@ VIRAL_SUBREDDITS = {"pics", "todayilearned", "nextfuckinglevel", "damnthatsinter
                     "awfuleverything", "worldnews", "politics", "funny", "memes", "interestingasfuck", "mildlyinteresting", "showerthoughts",
                     "news", "videos", "gifs", "aww", "oddlysatisfying", "facepalm", "mademesmile", "wholesomememes", "unpopularopinion",
                     "lifeprotips", "youshouldknow", "popculturechat", "unexpected", "therewasanattempt", "caughtmyeye", "upliftingnews",
-                    "nba", "nfl", "soccer", "bestofredditorupdates", "maliciouscompliance", "pettyrevenge", "tifu", "stupidquestions", "casualuk"}
+                    "nba", "nfl", "soccer", "bestofredditorupdates", "maliciouscompliance", "pettyrevenge", "tifu", "stupidquestions", "casualuk",
+                    # video-game communities: "irrigation" or "inventory" there means a game mechanic, not a real-world problem
+                    "timberborn", "oxygennotincluded", "captain_of_industry", "spaceengineers", "factorio", "satisfactory", "minecraft", "gaming",
+                    "dwarffortress", "rimworld", "stardewvalley", "cities_skylines", "citiesskylines", "farmingsimulator", "foxholegame", "eve",
+                    # news-link reposts: a headline pasted by a bot is not a person describing a problem
+                    "autonewspaper", "indiatodaylive", "businesstodaynews", "indianews247", "newsindia", "health2020", "worldpapermoney"}
 CANDIDATE_SNIPPET = 220
+
+
+# Plain-language equivalents for narrowing words, so "renters" is not missed in a post that says "tenant". Small and curated on purpose.
+MODIFIER_SYNONYMS = {
+    "renters": ["tenant", "tenants", "renter", "landlord", "rental"], "renter": ["tenant", "tenants", "landlord", "rental"],
+    "tenants": ["renter", "renters", "landlord"], "college": ["university", "campus", "hostel", "engineering", "student", "students", "btech"],
+    "hostel": ["dorm", "dormitory", "pg", "mess"], "street": ["hawker", "hawkers", "stall", "cart", "roadside", "footpath", "thela"],
+    "shop": ["store", "kirana", "retail", "stall"], "farm": ["farmer", "farmers", "farming", "agricultural", "field", "acre"],
+    "rural": ["village", "villages", "gram", "panchayat"], "student": ["students", "school", "college", "university"],
+}
 
 
 def _lacks_modifier(terms: list[str], text: str) -> bool:
@@ -585,9 +600,24 @@ def _lacks_modifier(terms: list[str], text: str) -> bool:
                 return False  # a one-word synonym ("PMFBY") rescues only the posts that actually contain it
             continue
         checked = True
-        if _has_word(words[0], text, loose=True):
+        if _has_word(words[0], text, loose=True) or any(_has_word(w, text, loose=True) for w in MODIFIER_SYNONYMS.get(words[0].lower(), ())):
             return False
     return checked
+
+
+def _is_thin(p: "S.Post") -> bool:
+    """A photo or one-line post: no body, or a body that only repeats the title. Nothing to read about who, what failed or what it cost."""
+    body = clean(p.text or "")
+    return p.source.startswith("reddit") and (len(body) < 25 or body.casefold() == clean(p.title).casefold())
+
+
+_FIRST_PERSON = re.compile(r"\b(?:we|i|our|my|me)\b.{0,120}\b(?:found|got|paid|pay|stuck|waiting|waited|refus\w+|denied|rejected|delay\w*|complain\w*|"
+                           r"lost|charged|cannot|can't|couldn't|unable|struggl\w+|ignored|withh[eo]ld|withheld|never\s+(?:got|received|came))\b", re.I | re.S)
+
+
+def _first_person(p: "S.Post") -> bool:
+    """The writer describes something that happened to them. A cheap hint for the cases the evidence-kind classifier files as general discussion."""
+    return bool(_FIRST_PERSON.search(clean(f"{p.title} {(p.text or '')[:400]}")))
 
 
 _PITCH = re.compile(r"^\s*(?:\[?(?:show|launch) hn\]?|i (?:just )?(?:built|made|launched|created)|we (?:just )?(?:built|made|launched)|built a|early mvp|"
@@ -628,7 +658,8 @@ def _candidates(posts: list[S.Post], terms: list[str], limit: int = CANDIDATE_LI
                  - (3 if profile["promotional"] else 0)
                  - (2.5 if _is_pitch(p.title) else 0)
                  - (2.5 if p.source not in STRUCTURED and p.source not in PAPERS and _lacks_modifier(topic_terms, early) else 0)
-                 - (3 if sub in VIRAL_SUBREDDITS else 0))
+                 - (3 if sub in VIRAL_SUBREDDITS else 0)
+                 - (1.5 if _is_thin(p) else 0))
         pool.append((score, p, "title" if title_hit else "opening"))
     pool.sort(key=lambda x: x[0], reverse=True)
     pool = _diversify(pool, limit)  # no source fills more than ~40%
@@ -645,6 +676,10 @@ def _candidate_view(i: int, p: S.Post, where: str, terms: list[str] | None = Non
         out["promotional"] = True
     if terms and p.source not in STRUCTURED and p.source not in PAPERS and _lacks_modifier(terms, clean(f"{p.title} {(p.text or '')[:400]}")):
         out["partial_match"] = True  # about the broader subject: it lacks the topic's narrowing word (e.g. "crop" in "crop insurance claims")
+    if _is_thin(p):
+        out["thin"] = True  # no body text to judge: a photo, a one-liner or a repeated title
+    if _first_person(p) and not _is_pitch(p.title):
+        out["first_person"] = True  # the writer says it happened to them, even when `kind` reads as general discussion
     if _is_pitch(p.title):
         out["pitch"] = True  # a founder showing or testing their own product: a competitor lead, not independent evidence of the pain
     return out
@@ -716,9 +751,12 @@ def _recency(years: list[str]) -> dict:
     return {"first": ys[0], "last": ys[-1], "posts_in_last_2_years": sum(1 for y in ys if y >= now - 2), "of": len(ys)}
 
 
-def _problem_clusters(cands: list[tuple[float, S.Post, str]], niche: str, n: int = 8) -> list[dict]:
+def _problem_clusters(cands: list[tuple[float, S.Post, str]], niche: str, n: int = 8, terms: list[str] | None = None) -> list[dict]:
     """Group candidates that talk about the same thing and say how many separate voices and sources stand behind each.
     Counts are clues, not proof: handles are not identity-checked and public posts are not a survey."""
+    if terms:  # posts about the broader subject, and photos or one-liners, would form groups about something else
+        cands = [c for c in cands if c[1].source in STRUCTURED or c[1].source in PAPERS
+                 or not (_lacks_modifier(terms, clean(f"{c[1].title} {(c[1].text or '')[:400]}")) or _is_thin(c[1]))]
     index = {p.id: i for i, (_, p, _) in enumerate(cands, 1)}
     dicts = [{"id": p.id, "title": p.title, "text": p.text, "author": p.author, "url": p.url, "source": p.source,
               "score": p.score, "comments": p.comments, "created": p.created} for _, p, _ in cands]
@@ -1046,7 +1084,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "coverage": status,
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
         "candidates": [_candidate_view(i, p, w, [niche] + also) for i, (_, p, w) in enumerate(cands, 1)],
-        "problem_clusters": _problem_clusters(cands, niche),
+        "problem_clusters": _problem_clusters(cands, niche, terms=[niche] + also),
         "problem_clusters_note": ("evidence_strength says how much separate evidence this sample holds (distinct handles and kinds of evidence). "
                                   "It is not prevalence, severity or demand. recency_in_sample says when people wrote, not whether the problem is improving. "
                                   "Groups are formed by shared words, so they mostly catch posts that repeat each other; they do not find themes in different wording. Group candidates by meaning yourself."),
@@ -1086,6 +1124,19 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         payload["near_misses_note"] = ("These candidates did not qualify as top results. Some may lack hard requirements, use different wording, "
                                        "or be promotional product leads rather than independent complaint evidence. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
+    leads = [c for c in payload["candidates"] if not (c.get("partial_match") or c.get("pitch") or c.get("promotional") or c.get("thin"))
+             and (c["kind"] in {"help_request", "reported_complaint", "workaround_or_manual_process", "technical_failure_report"} or c.get("first_person"))]
+    if len(payload["top_posts"]) < 5 and leads:
+        payload["lead_posts"] = {"ids": [c["id"] for c in leads[:8]],
+                                 "note": ("top_posts is short because it needs every word of the topic. These candidates passed the topic gate and read as first-hand "
+                                          "(not partial, not a pitch, not a photo or one-liner). Read them first; they are leads, not verified evidence.")}
+    if reg:
+        names = {reg["name"].casefold(), *{w for w in (reg.get("code") or "").casefold().split() if len(w) > 2}}
+        hits = sum(1 for c in payload["candidates"] if any(n in f"{c['title']} {c['snippet']} {c['source']}".casefold() for n in names))
+        payload["region_hits"] = {"candidates_naming_region": hits, "of": len(payload["candidates"])}
+        if hits == 0:
+            payload["region_hits"]["warning"] = (f"None of the candidates mention {reg['name']}: the results are probably from elsewhere. Treat them as how the problem looks "
+                                                 "in other countries, and search with local place names and words (search_pain with `also`).")
     if any(not t.isascii() for t in [niche, *(also or [])]):
         payload["language_note"] = ("Non-English wording was searched and matched, but the complaint, pain and payment word lists are English-only. "
                                     "Non-English posts can appear in candidates; they rarely reach top_posts or validation signals, so read candidates yourself "

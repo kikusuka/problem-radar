@@ -57,8 +57,14 @@ TOPIC_TERMS = {
                         (r"loan|credit|debt", ["Kisan Credit Card", "farm loan waiver"])],
         "elder care": [(r".", ["old age home", "senior citizens"])],
         "health": [(r"insur|claim|bill|cost", ["Ayushman Bharat"]), (r"rural|village|clinic|doctor", ["PHC primary health centre", "ASHA worker"])],
-        "education": [(r"scholar|fee|fund", ["scholarship portal"]), (r"exam|board|coach|test", ["board exams", "coaching"])],
+        "education": [(r"scholar|fee|fund", ["National Scholarship Portal", "scholarship portal"]), (r"exam|board|coach|test", ["board exams", "coaching"])],
+        "money": [(r"vendor|street|stall|payment|upi|qr", ["UPI QR code", "PM SVANidhi"]), (r"loan|credit", ["Mudra loan", "microfinance"])],
+        "housing": [(r"hostel|mess|dorm", ["hostel warden", "mess committee"]), (r"rent|tenant|deposit|landlord", ["rent agreement", "broker deposit"])],
         "transport": [(r"road|pothole|traffic", ["potholes"]), (r"bus|pass|commut", ["bus pass"])],
+    },
+    "KE": {
+        "transport": [(r"bus|matatu|commut|fare|route", ["matatu"])],
+        "money": [(r"payment|vendor|wallet|loan|mobile", ["M-Pesa"])],
     },
 }
 
@@ -86,6 +92,8 @@ DOMAIN_WORDS = {
     "transport": r"road|traffic|transport|bus|pothole|commut|vehicle",
     "work": r"job|worker|labou?r|wage|employ|gig",
     "safety": r"safety|crime|accident|harass",
+    "money": r"payment|upi|bank|wallet|vendor|loan|credit|cashless",
+    "housing": r"rent|tenant|landlord|deposit|hostel|housing|mess\b|dorm",
 }
 
 
