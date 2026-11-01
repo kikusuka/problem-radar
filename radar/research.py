@@ -1144,12 +1144,16 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                                  "posts": [{k: c[k] for k in ("id", "title", "snippet", "url", "source", "date") if k in c} for c in leads[:8]],
                                  "note": ("top_posts is short because it needs every word of the topic. These candidates passed the topic gate and read as first-hand "
                                           "(not partial, not a pitch, not a photo or one-liner). Read them first; they are leads, not verified evidence.")}
+    if not payload["top_posts"] and not leads:
+        payload["blind_spot"] = ("Public posts show almost nothing first-hand on this topic. Do not read that as 'no problem': the people affected may not post in English "
+                                 "on Reddit or Hacker News. Say so in your answer, then use official data (see region_pack or your own web search) and plan direct "
+                                 "conversations (clinic staff, vendors, students) before calling anything a finding.")
     if reg:
         names = {reg["name"].casefold(), *{w for w in (reg.get("code") or "").casefold().split() if len(w) > 2}}
         hits = sum(1 for c in payload["candidates"] if any(n in f"{c['title']} {c['snippet']} {c['source']}".casefold() for n in names))
         payload["region_hits"] = {"candidates_naming_region": hits, "of": len(payload["candidates"])}
-        if hits == 0:
-            payload["region_hits"]["warning"] = (f"None of the candidates mention {reg['name']}: the results are probably from elsewhere. Treat them as how the problem looks "
+        if hits * 4 < len(payload["candidates"]):
+            payload["region_hits"]["warning"] = (f"Few or none of the candidates mention {reg['name']} ({hits} of {len(payload['candidates'])}): the results are mostly from elsewhere. Treat them as how the problem looks "
                                                  "in other countries, and search with local place names and words (search_pain with `also`).")
     if any(not t.isascii() for t in [niche, *(also or [])]):
         payload["language_note"] = ("Non-English wording was searched and matched, but the complaint, pain and payment word lists are English-only. "

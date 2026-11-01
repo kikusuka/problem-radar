@@ -1610,3 +1610,9 @@ def test_prospective_questions_and_old_posts_are_not_leads():
 def test_fiction_subreddits_are_dropped():
     p = S.Post("reddit", "f", "I don't get paid enough to work at this small rural clinic - 4", "we found a monster at the rural clinic", "https://x/f", "a", 5, 1, "2026-10-17", {"subreddit": "TalesFromTheCreeps"})
     assert research._candidates([p], ["rural clinic medicine stock shortage"]) == []
+
+
+def test_blind_spot_is_reported_when_nothing_first_hand_is_found():
+    out = research.research("zzqx unfindable topic", region="Kenya", force=True)
+    if not out["top_posts"] and "lead_posts" not in out:
+        assert "blind_spot" in out
