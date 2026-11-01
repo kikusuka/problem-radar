@@ -573,7 +573,7 @@ VIRAL_SUBREDDITS = {"pics", "todayilearned", "nextfuckinglevel", "damnthatsinter
                     "timberborn", "oxygennotincluded", "captain_of_industry", "spaceengineers", "factorio", "satisfactory", "minecraft", "gaming",
                     "dwarffortress", "rimworld", "stardewvalley", "cities_skylines", "citiesskylines", "farmingsimulator", "foxholegame", "eve",
                     # news-link reposts: a headline pasted by a bot is not a person describing a problem
-                    "autonewspaper", "indiatodaylive", "businesstodaynews", "indianews247", "newsindia", "health2020", "worldpapermoney"}
+                    "talesfromthecreeps", "nosleep", "creepypasta", "writingprompts", "shortscarystories", "hfy", "autonewspaper", "indiatodaylive", "businesstodaynews", "indianews247", "newsindia", "health2020", "worldpapermoney"}
 CANDIDATE_SNIPPET = 220
 
 
@@ -603,6 +603,15 @@ def _lacks_modifier(terms: list[str], text: str) -> bool:
         if _has_word(words[0], text, loose=True) or any(_has_word(w, text, loose=True) for w in MODIFIER_SYNONYMS.get(words[0].lower(), ())):
             return False
     return checked
+
+
+_PROSPECTIVE = re.compile(r"\b(?:planning to join|(?:will|going to) (?:soon )?be joining|thinking (?:of|about) (?:joining|applying)|about to join|moving into|never lived|"
+                          r"how (?:is|are) the .{0,40}\b(?:at|in|for)\b|is it (?:worth|good)|any tips|tips on how|how do people figure)\b", re.I)
+
+
+def _is_prospective(p: "S.Post") -> bool:
+    """Someone about to arrive and asking what it is like. A question about a place, not a report of something that went wrong for them."""
+    return bool(_PROSPECTIVE.search(clean(f"{p.title} {(p.text or '')[:200]}")))
 
 
 def _is_thin(p: "S.Post") -> bool:
@@ -677,6 +686,8 @@ def _candidate_view(i: int, p: S.Post, where: str, terms: list[str] | None = Non
         out["promotional"] = True
     if terms and p.source not in STRUCTURED and p.source not in PAPERS and _lacks_modifier(terms, clean(f"{p.title} {(p.text or '')[:400]}")):
         out["partial_match"] = True  # about the broader subject: it lacks the topic's narrowing word (e.g. "crop" in "crop insurance claims")
+    if _is_prospective(p) and not _first_person(p):
+        out["prospective"] = True  # a newcomer asking what a place is like, not a report of a problem
     if _is_thin(p) and not _first_person(p):
         out["thin"] = True  # no body text to judge: a photo, a one-liner or a repeated title
     if _first_person(p) and not _is_pitch(p.title):
@@ -1125,10 +1136,12 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         payload["near_misses_note"] = ("These candidates did not qualify as top results. Some may lack hard requirements, use different wording, "
                                        "or be promotional product leads rather than independent complaint evidence. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
-    leads = [c for c in payload["candidates"] if not (c.get("partial_match") or c.get("pitch") or c.get("promotional") or c.get("thin"))
-             and (c["kind"] in {"help_request", "reported_complaint", "workaround_or_manual_process", "technical_failure_report"} or c.get("first_person"))]
+    old = str(int(time.strftime("%Y")) - 6)
+    leads = [c for c in payload["candidates"] if not (c.get("partial_match") or c.get("pitch") or c.get("promotional") or c.get("thin") or c.get("prospective"))
+             and (c.get("date") or "9999") >= old and (c["kind"] in {"help_request", "reported_complaint", "workaround_or_manual_process", "technical_failure_report"} or c.get("first_person"))]
     if len(payload["top_posts"]) < 5 and leads:
         payload["lead_posts"] = {"ids": [c["id"] for c in leads[:8]],
+                                 "posts": [{k: c[k] for k in ("id", "title", "snippet", "url", "source", "date") if k in c} for c in leads[:8]],
                                  "note": ("top_posts is short because it needs every word of the topic. These candidates passed the topic gate and read as first-hand "
                                           "(not partial, not a pitch, not a photo or one-liner). Read them first; they are leads, not verified evidence.")}
     if reg:

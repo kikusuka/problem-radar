@@ -1596,3 +1596,17 @@ def test_first_person_catches_paying_and_sick_and_thin_skips_them():
 def test_hostel_food_search_gets_no_automatic_warden_term():
     from radar import packs
     assert packs.auto_terms(R_.resolve("India"), "college hostel mess food quality") == []  # "hostel warden" pulled crime news, not food complaints
+
+
+def test_prospective_questions_and_old_posts_are_not_leads():
+    mk = lambda i, t, b: S.Post("reddit", i, t, b, f"https://x/{i}", "a", 1, 1, "2026-01-01", {"subreddit": "x"})
+    assert research._is_prospective(mk("a", "How is the mess food at SRM?", "Thinking about joining"))
+    assert research._is_prospective(mk("b", "Regarding the hostel", "I will soon be joining NIT and want to know"))
+    assert not research._is_prospective(mk("c", "Insects in mess food", "we found an insect in rice and the warden refused to listen"))
+    v = research._candidate_view(1, mk("d", "How is mess food in hostel?", "planning to join next year"), "title")
+    assert v.get("prospective") is True
+
+
+def test_fiction_subreddits_are_dropped():
+    p = S.Post("reddit", "f", "I don't get paid enough to work at this small rural clinic - 4", "we found a monster at the rural clinic", "https://x/f", "a", 5, 1, "2026-10-17", {"subreddit": "TalesFromTheCreeps"})
+    assert research._candidates([p], ["rural clinic medicine stock shortage"]) == []
