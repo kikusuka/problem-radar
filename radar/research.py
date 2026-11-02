@@ -21,6 +21,7 @@ from threading import BoundedSemaphore
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import themes as TH
 from . import regions as R
 from . import sources as S
 from .cluster import clean, cluster_posts, jaccard, keywords
@@ -755,6 +756,32 @@ def _lens_block(cands, niche: str, also: list[str], lens: str, reg: dict | None,
             "next_moves": X.next_moves(views, clusters, vocab, comms, gap_list, niche, lens, reg["name"] if reg else "")}
 
 
+def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
+    """Group first-hand posts by what went wrong (ignored, refused, overcharged, ...), so one topic splits into separate problems."""
+    index = {p.id: i for i, (_, p, _) in enumerate(cands, 1)}
+    groups: dict[str, list] = {}
+    for _, p, _ in cands:
+        if p.source in STRUCTURED or p.source in PAPERS or _is_thin(p) or _is_outreach(p) or _is_pitch(p.title):
+            continue
+        body = clean(f"{p.title} {(p.text or '')[:600]}")
+        if _lacks_modifier(terms, body) or (_is_prospective(p) and not _first_person(p)):
+            continue
+        fam = TH.families(body)
+        if fam:
+            groups.setdefault(fam[0], []).append(p)
+    out = []
+    for key, ps in groups.items():
+        handles = {(p.source.split("/")[0], (p.author or "").strip().casefold()) for p in ps if (p.author or "").strip()}
+        years = sorted(p.created[:4] for p in ps if getattr(p, "created", None))
+        lead = max(ps, key=lambda p: (p.score or 0) + 2 * (p.comments or 0))
+        out.append({"what_goes_wrong": TH.label(key), "posts": len(ps), "voices": len(handles),
+                    "communities": sorted({p.source for p in ps})[:6], "recency_in_sample": _recency(years),
+                    "lead_title": lead.title[:100], "candidate_ids": [f"c{index[p.id]}" for p in ps[:8]],
+                    "evidence_strength": "moderate" if len(handles) >= 3 else "weak"})
+    out.sort(key=lambda g: (g["voices"], g["posts"]), reverse=True)
+    return [g for g in out if g["posts"] >= 2][:n]
+
+
 def _shared_terms(g: list[dict], niche: str, n: int = 5) -> list[str]:
     """The specific words that make these posts one cluster, so a reader can see why they were grouped."""
     skip = keywords(niche)
@@ -777,10 +804,11 @@ def _recency(years: list[str]) -> dict:
 def _problem_clusters(cands: list[tuple[float, S.Post, str]], niche: str, n: int = 8, terms: list[str] | None = None) -> list[dict]:
     """Group candidates that talk about the same thing and say how many separate voices and sources stand behind each.
     Counts are clues, not proof: handles are not identity-checked and public posts are not a survey."""
+    all_cands = cands
     if terms:  # posts about the broader subject, and photos or one-liners, would form groups about something else
         cands = [c for c in cands if c[1].source in STRUCTURED or c[1].source in PAPERS
                  or not (_lacks_modifier(terms, clean(f"{c[1].title} {(c[1].text or '')[:400]}")) or _is_thin(c[1]) or _is_outreach(c[1]))]
-    index = {p.id: i for i, (_, p, _) in enumerate(cands, 1)}
+    index = {p.id: i for i, (_, p, _) in enumerate(all_cands, 1)}  # ids match the candidates list, not the filtered one
     dicts = [{"id": p.id, "title": p.title, "text": p.text, "author": p.author, "url": p.url, "source": p.source,
               "score": p.score, "comments": p.comments, "created": p.created} for _, p, _ in cands]
     out = []
@@ -861,7 +889,7 @@ FIT_RUBRIC = {
 
 BASE_GUIDE = (
     "You are the analyst. `candidates` is a wide, lightly filtered pool of raw, unverified public posts: judge relevance yourself, "
-    "drop anything that is not really about the topic, and use `problem_clusters` (candidate ids, voices, sources, confidence) as grouping hints. "
+    "drop anything that is not really about the topic, and use `complaint_themes` (what goes wrong, with candidate ids and voices) and `problem_clusters` as grouping hints: one topic usually holds several separate problems. "
     "`kind` tells you what a post is (a complaint, a help request, general discussion, a product showcase); venting is context, a repeated concrete pain is a problem. "
     "`top_posts` is the stricter keyword-filtered subset. "
     "1) Group them by the underlying problem (meaning, not shared words) and discard off-topic or already-solved ones. "
@@ -1108,6 +1136,10 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "top_posts": [_compact(p, rel, text) for _, p, rel, text in ranked[:limit]],
         "candidates": [_candidate_view(i, p, w, [niche] + also) for i, (_, p, w) in enumerate(cands, 1)],
         "problem_clusters": _problem_clusters(cands, niche, terms=[niche] + also),
+        "complaint_themes": _complaint_themes(cands, [niche] + also),
+        "complaint_themes_note": ("Candidates grouped by what went wrong (nobody responds, refuses, extra charges, delays, unclear rules, no proof, scam, "
+                                  "poor quality, done by hand, overload, cannot get it). Each is a possible separate problem inside the topic. Keyword "
+                                  "matches only: read the posts, merge or split by meaning, and drop groups that are not real problems."),
         "problem_clusters_note": ("evidence_strength says how much separate evidence this sample holds (distinct handles and kinds of evidence). "
                                   "It is not prevalence, severity or demand. recency_in_sample says when people wrote, not whether the problem is improving. "
                                   "Groups are formed by shared words, so they mostly catch posts that repeat each other; they do not find themes in different wording. Group candidates by meaning yourself."),

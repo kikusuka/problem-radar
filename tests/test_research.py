@@ -1623,3 +1623,15 @@ def test_outreach_detected():
     p = S.Post(id="1", source="reddit/x", title="ISO medical students interested in rural medicine",
                text="Hey everyone, I'm a reporter with a news site working on a story", author="a", url="u", score=1, comments=0, created=0)
     assert R._is_outreach(p)
+
+
+def test_complaint_themes_split_one_topic():
+    from radar import research as R, sources as S
+    def post(i, t, b):
+        return (1.0, S.Post(id=i, source="reddit/Renters", title=t, text=b, author=f"u{i}", url="u", score=1, comments=1, created="2026-10-01"), "")
+    cands = [post("1", "Landlord ignores my messages about deposit", "I moved out and he is ghosting me, no reply for weeks"),
+             post("2", "Landlord ghosting about deposit", "he is unresponsive after I moved out, deposit never returned"),
+             post("3", "Landlord deposit extra charges", "he deducted hidden fees and charged me for paint, deposit"),
+             post("4", "Deposit deductions", "surprise charges and extra fees on my deposit, landlord deposit")]
+    out = R._complaint_themes(cands, ["landlord deposit"])
+    assert {g["what_goes_wrong"] for g in out} == {"Nobody responds", "Unexpected or inflated charges"}
