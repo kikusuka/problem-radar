@@ -1616,3 +1616,10 @@ def test_blind_spot_is_reported_when_nothing_first_hand_is_found():
     out = research.research("zzqx unfindable topic", region="Kenya", force=True)
     if not out["top_posts"] and "lead_posts" not in out:
         assert "blind_spot" in out
+
+
+def test_outreach_detected():
+    from radar import research as R, sources as S
+    p = S.Post(id="1", source="reddit/x", title="ISO medical students interested in rural medicine",
+               text="Hey everyone, I'm a reporter with a news site working on a story", author="a", url="u", score=1, comments=0, created=0)
+    assert R._is_outreach(p)

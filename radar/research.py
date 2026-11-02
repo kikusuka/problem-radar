@@ -614,6 +614,15 @@ def _is_prospective(p: "S.Post") -> bool:
     return bool(_PROSPECTIVE.search(clean(f"{p.title} {(p.text or '')[:200]}")))
 
 
+_OUTREACH = re.compile(r"\b(?:i'?m\s+a\s+(?:reporter|journalist|student researcher)|reporter with|working on a story|looking for (?:participants|interviewees|respondents)|"
+                       r"take (?:my|our|this) survey|fill (?:out )?(?:my|our|this) (?:survey|form)|survey for my)\b|^\s*iso\b", re.I)
+
+
+def _is_outreach(p: "S.Post") -> bool:
+    """A reporter or researcher recruiting people to talk. About the topic, but not someone reporting their own problem."""
+    return bool(_OUTREACH.search(clean(f"{p.title} {(p.text or '')[:300]}")))
+
+
 def _is_thin(p: "S.Post") -> bool:
     """A photo or one-line post: no body, or a body that only repeats the title. Nothing to read about who, what failed or what it cost."""
     body = clean(p.text or "")
@@ -686,6 +695,8 @@ def _candidate_view(i: int, p: S.Post, where: str, terms: list[str] | None = Non
         out["promotional"] = True
     if terms and p.source not in STRUCTURED and p.source not in PAPERS and _lacks_modifier(terms, clean(f"{p.title} {(p.text or '')[:400]}")):
         out["partial_match"] = True  # about the broader subject: it lacks the topic's narrowing word (e.g. "crop" in "crop insurance claims")
+    if _is_outreach(p):
+        out["outreach"] = True  # a reporter or researcher recruiting people, not a first-hand report
     if _is_prospective(p) and not _first_person(p):
         out["prospective"] = True  # a newcomer asking what a place is like, not a report of a problem
     if _is_thin(p) and not _first_person(p):
@@ -736,7 +747,7 @@ def _lens_block(cands, niche: str, also: list[str], lens: str, reg: dict | None,
     """What a web search cannot give: the community's own words, where they gather, what is missing, and what to do next."""
     views = [_candidate_view(i, p, w, [niche, *also]) for i, (_, p, w) in enumerate(cands, 1)]
     searched = [niche, *also]
-    vocab = X.people_say(views[:15], niche, searched)  # feedback works at shallow depth; deeper pools drift off-topic
+    vocab = X.people_say([v for v in views if not v.get("outreach") and not v.get("partial_match")][:15], niche, searched)  # feedback works at shallow depth; deeper pools drift off-topic
     comms = X.communities(views)
     gap_list = X.gaps(views, EVIDENCE_LAYER, R.coverage_note(reg, list(status)) if reg else "")
     clusters = _problem_clusters(cands, niche)
@@ -768,7 +779,7 @@ def _problem_clusters(cands: list[tuple[float, S.Post, str]], niche: str, n: int
     Counts are clues, not proof: handles are not identity-checked and public posts are not a survey."""
     if terms:  # posts about the broader subject, and photos or one-liners, would form groups about something else
         cands = [c for c in cands if c[1].source in STRUCTURED or c[1].source in PAPERS
-                 or not (_lacks_modifier(terms, clean(f"{c[1].title} {(c[1].text or '')[:400]}")) or _is_thin(c[1]))]
+                 or not (_lacks_modifier(terms, clean(f"{c[1].title} {(c[1].text or '')[:400]}")) or _is_thin(c[1]) or _is_outreach(c[1]))]
     index = {p.id: i for i, (_, p, _) in enumerate(cands, 1)}
     dicts = [{"id": p.id, "title": p.title, "text": p.text, "author": p.author, "url": p.url, "source": p.source,
               "score": p.score, "comments": p.comments, "created": p.created} for _, p, _ in cands]
@@ -1137,14 +1148,15 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
                                        "or be promotional product leads rather than independent complaint evidence. Retry with also=[synonyms] only when those terms preserve the required constraints.")
     payload["evidence_note"] = EVIDENCE_NOTE
     old = str(int(time.strftime("%Y")) - 6)
-    leads = [c for c in payload["candidates"] if not (c.get("partial_match") or c.get("pitch") or c.get("promotional") or c.get("thin") or c.get("prospective"))
+    leads = [c for c in payload["candidates"] if not (c.get("partial_match") or c.get("pitch") or c.get("promotional") or c.get("thin") or c.get("prospective") or c.get("outreach"))
              and (c.get("date") or "9999") >= old and (c["kind"] in {"help_request", "reported_complaint", "workaround_or_manual_process", "technical_failure_report"} or c.get("first_person"))]
     if len(payload["top_posts"]) < 5 and leads:
         payload["lead_posts"] = {"ids": [c["id"] for c in leads[:8]],
                                  "posts": [{k: c[k] for k in ("id", "title", "snippet", "url", "source", "date") if k in c} for c in leads[:8]],
                                  "note": ("top_posts is short because it needs every word of the topic. These candidates passed the topic gate and read as first-hand "
                                           "(not partial, not a pitch, not a photo or one-liner). Read them first; they are leads, not verified evidence.")}
-    if not payload["top_posts"] and not leads:
+    weak = bool(reg) and not payload["top_posts"] and all((c.get("date") or "9999") < str(int(time.strftime("%Y")) - 3) for c in leads)
+    if (not payload["top_posts"] and not leads) or weak:
         payload["blind_spot"] = ("Public posts show almost nothing first-hand on this topic. Do not read that as 'no problem': the people affected may not post in English "
                                  "on Reddit or Hacker News. Say so in your answer, then use official data (see region_pack or your own web search) and plan direct "
                                  "conversations (clinic staff, vendors, students) before calling anything a finding.")
