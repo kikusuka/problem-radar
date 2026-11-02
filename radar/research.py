@@ -766,7 +766,7 @@ def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
         body = clean(f"{p.title} {(p.text or '')[:600]}")
         if _lacks_modifier(terms, body) or (_is_prospective(p) and not _first_person(p)):
             continue
-        fam = TH.families(body)
+        fam = TH.families(body, " ".join(terms))
         if fam:
             groups.setdefault(fam[0], []).append(p)
     out = []
