@@ -15,12 +15,12 @@ from mcp.types import ToolAnnotations
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse
 
-from radar import brief, hunt, library, pulse, research, solved, sources, store, verify
+from radar import brief, browse, hunt, library, pulse, research, solved, sources, store, verify
 
 INSTRUCTIONS = (
     "Problem Radar is a problem-finding lens, not a web search: it finds what people struggle with, in their own words, and shows how much "
     "evidence stands behind it and what is missing. You do the judging; it fetches and checks. Follow these stages. "
-    "1 ORIENT (pick a direction): student_hunt or plan_hunt if the person is unsure; whats_happening for what is live now; "
+    "1 ORIENT (pick a direction): student_hunt or plan_hunt if the person is unsure; find_problems_now to browse what people are stuck on lately with no topic (and whats_happening for petitions and Ask HN); "
     "find_known_problems for problems hackathons already published. "
     "2 DISCOVER: research_niche (pass region and local wording in `also`); read `candidates` yourself and group them by meaning. "
     "3 DIG: follow `next_moves`: read_thread (the detail is in the replies), search_pain with the words in `people_say`, drill into `communities`. "
@@ -96,6 +96,16 @@ def whats_happening(topic: str = "", limit: int = 15) -> dict:
     It is a small current sample (developers and the UK lean), refreshed daily by a scheduled job, not a census. No match
     does not mean a topic is not a problem. The result says how old the feed is and whether it was fetched just now."""
     return pulse.find(topic, limit)
+
+
+@mcp.tool(title="Find problems people have right now", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True))
+def find_problems_now(area: str = "", days: int = 30, limit: int = 20, region: str = "") -> dict:
+    """Browse mode, no topic needed: what are people stuck on lately. Searches complaint phrasings ("frustrated with", "is there a
+    way to", "why is there no", "wish there was") on Reddit and Hacker News over the last `days`, keeps first-hand posts, and splits
+    them into separate problems (`problem_groups`) by phrases several different authors share. `area` is optional and broad
+    ("money", "school", "health", "work"); leave it empty to see what is loudest anywhere. Use it to choose a direction, then run
+    research_niche on one problem to dig in. A current sample, not a census; the result says so."""
+    return browse.find(area, days, limit, region)
 
 
 @mcp.tool(title="Check a finished problem brief", annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False))
@@ -297,7 +307,7 @@ def find_problems(topic: str, region: str = "") -> str:
     """Step-by-step way to turn research_niche output into a few honest problem statements."""
     return (
         f"Find real, unsolved problems in: {topic}" + (f" (region: {region})" if region else "") + ".\n"
-        "1. Call research_niche. Judge `candidates` yourself; clusters and strength labels are hints, not verdicts.\n"
+        "1. Call research_niche. Judge `candidates` yourself; `complaint_themes` (phrases several authors share, with evidence links) and clusters are hints, not verdicts. With no topic yet, call find_problems_now first.\n"
         "2. For each promising problem, name the evidence: who complains, what workaround they use, and whether anyone pays.\n"
         "3. Call check_if_solved. Existing products are supply, not proof of demand.\n"
         "4. Invert the claim: if an official or company source says it is solved, search for users reporting that it is not.\n"

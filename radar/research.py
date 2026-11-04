@@ -757,29 +757,51 @@ def _lens_block(cands, niche: str, also: list[str], lens: str, reg: dict | None,
 
 
 def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
-    """Group first-hand posts by what went wrong (ignored, refused, overcharged, ...), so one topic splits into separate problems."""
+    """Split one topic into separate problems using the phrases people in these posts actually use.
+    Two-word phrases that recur across different authors, and are not the topic's own words, name the sub-problems
+    (for a deposit topic: "small claims", "move-in photos", "itemized list"). The generic families only add a label."""
     index = {p.id: i for i, (_, p, _) in enumerate(cands, 1)}
-    groups: dict[str, list] = {}
+    topic = keywords(" ".join(terms))
+    junk = {"advice", "regarding", "ago", "weeks", "week", "months", "month", "days", "help", "question", "questions", "anyone", "info", "update", "issue", "issues", "situation", "year", "years", "last", "next", "told", "said", "asked", "went", "since", "already", "recently", "currently", "legal", "need", "needs", "thanks", "thank"}
+    stems = {t[:5] for t in topic}  # "return" also covers returned, returning, refund-style variants of the topic's own words
+    pool = []
     for _, p, _ in cands:
         if p.source in STRUCTURED or p.source in PAPERS or _is_thin(p) or _is_outreach(p) or _is_pitch(p.title):
             continue
-        body = clean(f"{p.title} {(p.text or '')[:600]}")
+        body = clean(f"{p.title} {(p.text or '')[:700]}")
         if _lacks_modifier(terms, body) or (_is_prospective(p) and not _first_person(p)):
             continue
-        fam = TH.families(body, " ".join(terms))
-        if fam:
-            groups.setdefault(fam[0], []).append(p)
-    out = []
-    for key, ps in groups.items():
+        toks = [t for t in re.findall(r"[a-z][a-z'\-]{2,}", body.lower())]
+        kws = [t if t in keywords(t) and t not in topic and t not in junk and t[:5] not in stems else None for t in toks]
+        phrases = {f"{a} {b}" for a, b in zip(kws, kws[1:]) if a and b}
+        pool.append((p, phrases))
+    author_of = {}
+    df: Counter = Counter()
+    for p, ph in pool:
+        for x in ph:
+            author_of.setdefault(x, set()).add((p.author or p.id).casefold())
+    common = {x for x, au in author_of.items() if len(au) >= 2}
+    out, used = [], set()
+    for phrase in sorted(common, key=lambda x: (-len(author_of[x]), x)):
+        ps = [p for p, ph in pool if phrase in ph and p.id not in used]
+        if len(ps) < 2:
+            continue
+        used.update(p.id for p in ps)
         handles = {(p.source.split("/")[0], (p.author or "").strip().casefold()) for p in ps if (p.author or "").strip()}
         years = sorted(p.created[:4] for p in ps if getattr(p, "created", None))
         lead = max(ps, key=lambda p: (p.score or 0) + 2 * (p.comments or 0))
-        out.append({"what_goes_wrong": TH.label(key), "posts": len(ps), "voices": len(handles),
+        fam = TH.families(clean(" ".join(f"{p.title} {(p.text or '')[:400]}" for p in ps)), " ".join(terms))
+        out.append({"people_mention": phrase, "what_goes_wrong": TH.label(fam[0]) if fam else None, "posts": len(ps), "voices": len(handles),
                     "communities": sorted({p.source for p in ps})[:6], "recency_in_sample": _recency(years),
                     "lead_title": lead.title[:100], "candidate_ids": [f"c{index[p.id]}" for p in ps[:8]],
-                    "evidence_strength": "moderate" if len(handles) >= 3 else "weak"})
-    out.sort(key=lambda g: (g["voices"], g["posts"]), reverse=True)
-    return [g for g in out if g["posts"] >= 2][:n]
+                    "evidence": [{"title": p.title[:110], "url": p.url, "date": (p.created or "")[:10], "source": p.source} for p in sorted(ps, key=lambda p: p.created or "", reverse=True)[:4]],
+                    "asking_for_help": sum(1 for p in ps if signal_profile(clean(f"{p.title} {p.text}"))["evidence_kind"] == "help_request"),
+                    "describing_workarounds": sum(1 for p in ps if signal_profile(clean(f"{p.title} {p.text}"))["evidence_kind"] == "workaround_or_manual_process"),
+                    "evidence_strength": "moderate" if len(handles) >= 3 else "weak",
+                    "next_test": "Ask 3 people in these communities about the last time this went wrong: what they did, what it cost, what they tried. A wrong answer here ends the idea."})
+        if len(out) >= n:
+            break
+    return out
 
 
 def _shared_terms(g: list[dict], niche: str, n: int = 5) -> list[str]:
@@ -1137,9 +1159,9 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
         "candidates": [_candidate_view(i, p, w, [niche] + also) for i, (_, p, w) in enumerate(cands, 1)],
         "problem_clusters": _problem_clusters(cands, niche, terms=[niche] + also),
         "complaint_themes": _complaint_themes(cands, [niche] + also),
-        "complaint_themes_note": ("Candidates grouped by what went wrong (nobody responds, refuses, extra charges, delays, unclear rules, no proof, scam, "
-                                  "poor quality, done by hand, overload, cannot get it). Each is a possible separate problem inside the topic. Keyword "
-                                  "matches only: read the posts, merge or split by meaning, and drop groups that are not real problems."),
+        "complaint_themes_note": ("First-hand posts grouped by a phrase that three or more different authors use and the topic itself does not (people_mention). "
+                                  "Each is a possible separate problem inside the topic; what_goes_wrong is only a generic hint. Read the posts, merge or split "
+                                  "by meaning, and drop groups that are not real problems."),
         "problem_clusters_note": ("evidence_strength says how much separate evidence this sample holds (distinct handles and kinds of evidence). "
                                   "It is not prevalence, severity or demand. recency_in_sample says when people wrote, not whether the problem is improving. "
                                   "Groups are formed by shared words, so they mostly catch posts that repeat each other; they do not find themes in different wording. Group candidates by meaning yourself."),

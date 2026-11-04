@@ -1629,9 +1629,34 @@ def test_complaint_themes_split_one_topic():
     from radar import research as R, sources as S
     def post(i, t, b):
         return (1.0, S.Post(id=i, source="reddit/Renters", title=t, text=b, author=f"u{i}", url="u", score=1, comments=1, created="2026-10-01"), "")
-    cands = [post("1", "Landlord ignores my messages about deposit", "I moved out and he is ghosting me, no reply for weeks"),
-             post("2", "Landlord ghosting about deposit", "he is unresponsive after I moved out, deposit never returned"),
-             post("3", "Landlord deposit extra charges", "he deducted hidden fees and charged me for paint, deposit"),
-             post("4", "Deposit deductions", "surprise charges and extra fees on my deposit, landlord deposit")]
+    cands = [post("1", "Landlord deposit small claims", "I am filing small claims court for my deposit and it is confusing"),
+             post("2", "Landlord deposit small claims help", "how does small claims work for a deposit, landlord ignores me"),
+             post("3", "Deposit small claims paperwork", "small claims forms are confusing, landlord deposit"),
+             post("4", "Landlord deposit", "he keeps the deposit, nothing else")]
     out = R._complaint_themes(cands, ["landlord deposit"])
-    assert {g["what_goes_wrong"] for g in out} == {"Nobody responds", "Unexpected or inflated charges"}
+    assert out and out[0]["people_mention"] == "small claims" and out[0]["posts"] == 3
+
+
+def test_browse_find_filters_and_groups(monkeypatch):
+    from radar import browse, sources as S
+    def mk(i, title, body, sub="Renters", comments=5):
+        return S.Post("reddit", f"rd-{i}", title, body, f"https://r/{i}", f"user{i}", 20, comments, time.strftime("%Y-%m-%d"), {"site": sub})
+    posts = [mk(1, "Cannot find proof of move in condition", "I paid and got stuck, no move in photos anywhere"),
+             mk(2, "No move in photos, now stuck", "I cannot prove the damage, my landlord charged me, move in photos missing"),
+             mk(3, "Funny cat", "", "pics"),
+             mk(4, "I'm a reporter looking for people", "I'm a reporter with a news site working on a story")]
+    monkeypatch.setattr(browse, "_one", lambda q, t: posts)
+    monkeypatch.setattr(browse, "_hn", lambda a: [])
+    browse._CACHE.clear()
+    out = browse.find("renting", days=30)
+    assert out["posts_kept"] == 2 and all(p["title"] != "Funny cat" for p in out["posts"])
+    assert any("photos" in g["people_mention"] for g in out["problem_groups"])
+
+
+def test_browse_reports_failed_searches_and_skips_cache(monkeypatch):
+    from radar import browse
+    monkeypatch.setattr(browse, "_one", lambda q, t: None)
+    monkeypatch.setattr(browse, "_hn", lambda a: None)
+    browse._CACHE.clear()
+    out = browse.find("money")
+    assert out["searches"]["failed_or_rate_limited"] == 5 and "warning" in out and not browse._CACHE
