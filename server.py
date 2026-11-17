@@ -124,6 +124,13 @@ def brief_resource() -> str:
     return json.dumps(brief.SCHEMA, indent=1)
 
 
+@mcp.resource("radar://rubric")
+def rubric_resource() -> str:
+    """The 10-point student viability rubric: score every candidate problem the same way."""
+    from radar import painscore
+    return painscore.RUBRIC
+
+
 @mcp.resource("radar://pulse")
 def pulse_resource() -> str:
     """The current rolling feed of problems people are asking about right now."""

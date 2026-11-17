@@ -21,6 +21,7 @@ from threading import BoundedSemaphore
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import painscore as PS
 from . import themes as TH
 from . import regions as R
 from . import sources as S
@@ -795,6 +796,7 @@ def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
                     "communities": sorted({p.source for p in ps})[:6], "recency_in_sample": _recency(years),
                     "lead_title": lead.title[:100], "candidate_ids": [f"c{index[p.id]}" for p in ps[:8]],
                     "evidence": [{"title": p.title[:110], "url": p.url, "date": (p.created or "")[:10], "source": p.source} for p in sorted(ps, key=lambda p: p.created or "", reverse=True)[:4]],
+                    **PS.score([clean(f"{p.title} {p.text}") for p in ps], len({p.source.split("/")[0] for p in ps})),
                     "asking_for_help": sum(1 for p in ps if signal_profile(clean(f"{p.title} {p.text}"))["evidence_kind"] == "help_request"),
                     "describing_workarounds": sum(1 for p in ps if signal_profile(clean(f"{p.title} {p.text}"))["evidence_kind"] == "workaround_or_manual_process"),
                     "evidence_strength": "moderate" if len(handles) >= 3 else "weak",

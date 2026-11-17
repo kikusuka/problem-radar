@@ -1660,3 +1660,17 @@ def test_browse_reports_failed_searches_and_skips_cache(monkeypatch):
     browse._CACHE.clear()
     out = browse.find("money")
     assert out["searches"]["failed_or_rate_limited"] == 5 and "warning" in out and not browse._CACHE
+
+
+def test_pain_score_rewards_behaviour_not_volume():
+    from radar import painscore as PS
+    hi = PS.score(["I track it in a spreadsheet every week and it cost me $250 in lost deposit, so I filed small claims", "manual copy paste daily"], 2)
+    lo = PS.score(["the logo is ugly"], 1)
+    assert hi["pain_score"] >= 8 and lo["pain_score"] == 0
+
+
+def test_failure_modes_flags_abandoned_and_lists_complaints(monkeypatch):
+    from radar import solved, sources as S
+    monkeypatch.setattr(S, "_get", lambda *a, **k: ({"items": [{"title": "Add offline mode", "reactions": {"total_count": 40}, "comments": 12, "html_url": "u"}]}, ""))
+    fm = solved._failure_modes({"url": "https://github.com/a/b", "last_push": "2022-01-01", "description": "sync tool"}, ["offline"])
+    assert fm["abandoned_risk"] is True and fm["top_open_complaints"][0]["reactions"] == 40 and "offline" in fm["constraint_gaps"]

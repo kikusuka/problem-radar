@@ -9,10 +9,13 @@ So we search short keyword variants, and treat thin evidence as "inconclusive", 
 """
 from __future__ import annotations
 
+import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from . import sources as S
+from .ratelimit import limiter
 from .pain import constraints_match, missing_constraints, query_variants, relevance, topic_anchor_gaps, topic_candidate_fit, topic_fit
 from .research import MAX_QUERY_CHARS, Job, _body, _compact, _dedupe, run_jobs, web_suggestions
 
@@ -124,6 +127,41 @@ def assess(projects: list[dict], papers: list[dict], actions: list[dict], lens: 
     return {"hint": hint, "reasons": reasons, "is_a_hint_only": True, "basis": basis, "caveat": caveat}
 
 
+_REPO = re.compile(r"github\.com/([^/\s]+)/([^/\s#?]+)")
+CONSTRAINT_WORDS = ("offline", "windows", "mac", "linux", "android", "ios", "gpu", "docker", "free", "arabic", "hindi", "unicode", "slow", "memory", "crash")
+
+
+def _failure_modes(proj: dict, constraints: list[str]) -> dict:
+    """Why this project may not be the end of the road: how long since it was touched and what its users are still asking for.
+    Open issues with the most reactions are users waiting for something the project does not do."""
+    out: dict = {"abandoned_risk": None, "top_open_complaints": [], "constraint_gaps": []}
+    days = _days_since(proj.get("last_push") or "")
+    if days is not None:
+        out["abandoned_risk"] = days > 548 or bool(proj.get("archived"))
+        out["days_since_last_push"] = days
+    m = _REPO.search(proj.get("url") or "")
+    if not m:
+        return out
+    repo = f"{m.group(1)}/{m.group(2)}"
+    if not limiter.take("github", 1):
+        out["note"] = "issue lookup skipped (rate limit)"
+        return out
+    headers = {"Accept": "application/vnd.github+json"}
+    if os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
+    data, err = S._get("https://api.github.com/search/issues", {"q": f"repo:{repo} is:issue is:open", "sort": "reactions", "order": "desc", "per_page": 5}, headers)
+    if not isinstance(data, dict):
+        out["note"] = "issue lookup failed"
+        return out
+    for i in data.get("items", []) or []:
+        out["top_open_complaints"].append({"title": (i.get("title") or "")[:120], "reactions": (i.get("reactions") or {}).get("total_count", 0),
+                                           "comments": i.get("comments") or 0, "url": i.get("html_url") or ""})
+    titles = " ".join(c["title"].lower() for c in out["top_open_complaints"])
+    wanted = [c.lower() for c in constraints] + [w for w in CONSTRAINT_WORDS if w in (proj.get("description") or "").lower() + titles]
+    out["constraint_gaps"] = sorted({w for w in wanted if w and w in titles})
+    return out
+
+
 def check(problem: str, lens: str = "software") -> dict:
     if not isinstance(problem, str) or not problem.strip():
         raise ValueError("problem must be a non-empty string")
@@ -218,6 +256,11 @@ def check(problem: str, lens: str = "software") -> dict:
             f"{len(related_topic_candidates)} candidate(s) share important topic anchors but do not establish a full topic match. Inspect related_candidates before concluding."
         ]
         assessment["caveat"] += " Partial topic matches are shown for inspection only; they do not prove an existing solution fits the full problem or constraints."
+    if projects and lens in ("software", "any", "hardware"):
+        cons = missing_constraints(problem, "")
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            for proj, fm in zip(projects[:3], ex.map(lambda pr: _failure_modes(pr, cons), projects[:3])):
+                proj["failure_modes"] = fm
     return {
         "problem": problem,
         "lens": lens,
@@ -233,7 +276,8 @@ def check(problem: str, lens: str = "software") -> dict:
         "products_and_discussion": discussion[:8],
         "papers": papers[:6],
         "public_actions": actions[:5],
-        "gap_guide": GAP_ANGLES,
+        "gap_guide": GAP_ANGLES + " For the top projects, `failure_modes` lists the open issues users upvote most and whether the project looks abandoned: that is usually where the opening is.",
+        "rubric_hint": "Score what survives against radar://rubric (8-10 build, 5-7 narrow the wedge, 0-4 skip).",
         "llm_web_search_suggestions": (
             [f"{variants[0]} buy price", f"{variants[0]} open source", f"best {variants[0]} alternatives", f"{variants[0]} reviews complaints"]
             if lens in ("hardware", "software", "any") else web_suggestions(variants[0], lens)
