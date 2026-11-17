@@ -23,7 +23,8 @@ NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?\s*%?")
 
 
 def _norm(url: str) -> str:
-    return (url or "").strip().rstrip("/").lower()
+    u = re.sub(r"^https?://(?:www\.|old\.|m\.)?", "", (url or "").strip().lower())
+    return re.split(r"[?#]", u)[0].rstrip("/")
 
 
 def remember(url: str, title: str = "", text: str = "", source: str = "", date: str = "") -> None:

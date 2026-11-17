@@ -14,6 +14,7 @@ import math
 import json
 import os
 import re
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeout
@@ -324,7 +325,21 @@ def plan(niche: str, depth: str = "quick", sources: list[str] | None = None, se_
     return jobs
 
 
+_FANOUT = threading.BoundedSemaphore(int(os.environ.get("RADAR_MAX_FANOUTS", "2")))
+
+
 def run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post], dict]:
+    """At most a couple of search fan-outs run at once across the whole process. Parallel tool calls queue instead of piling up
+    dozens of outbound requests and their payloads on a 512 MB host, which got the container killed."""
+    got = _FANOUT.acquire(timeout=60)
+    try:
+        return _run_jobs(jobs, max_jobs)
+    finally:
+        if got:
+            _FANOUT.release()
+
+
+def _run_jobs(jobs: list[Job], max_jobs: int | None = None) -> tuple[list[S.Post], dict]:
     status = {j.source: {"jobs": 0, "submitted": 0, "completed": 0, "timed_out": 0, "cancelled_before_start": 0, "ok": 0, "posts": 0, "errors": [], "skipped": False,
                          "capacity_limited": False, "request_limited": False, "rate_limited": False} for j in jobs}
     for j in jobs:
@@ -641,7 +656,7 @@ def _first_person(p: "S.Post") -> bool:
     return bool(_FIRST_PERSON.search(clean(f"{p.title} {(p.text or '')[:400]}")))
 
 
-_PITCH = re.compile(r"^\s*(?:\[?(?:show|launch) hn\]?|i (?:just )?(?:built|made|launched|created)|we (?:just )?(?:built|made|launched)|built a|early mvp|"
+_PITCH = re.compile(r"^\s*(?:\[(?:promo\w*|feedback(?: wanted)?|self[- ]?promo\w*|launch|release|app|project|dev)\]|introducing\b|app name:|i (?:made|wrote|developed|designed) (?:a|an|my|this)\b|check out my\b|\[?(?:show|launch) hn\]?|i (?:just )?(?:built|made|launched|created)|we (?:just )?(?:built|made|launched)|built a|early mvp|"
                     r"feedback (?:on|wanted)|validat\w+ (?:my|an?) idea|would you (?:use|pay)|i spent .{0,40}(?:building|researching)|found a validated problem|"
                     r"(?:i'?m|we'?re) (?:building|launching|working on))", re.I)
 
@@ -757,7 +772,7 @@ def _lens_block(cands, niche: str, also: list[str], lens: str, reg: dict | None,
             "next_moves": X.next_moves(views, clusters, vocab, comms, gap_list, niche, lens, reg["name"] if reg else "")}
 
 
-def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
+def _complaint_themes(cands, terms: list[str], n: int = 6, min_authors: int = 2) -> list[dict]:
     """Split one topic into separate problems using the phrases people in these posts actually use.
     Two-word phrases that recur across different authors, and are not the topic's own words, name the sub-problems
     (for a deposit topic: "small claims", "move-in photos", "itemized list"). The generic families only add a label."""
@@ -770,6 +785,8 @@ def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
         if p.source in STRUCTURED or p.source in PAPERS or _is_thin(p) or _is_outreach(p) or _is_pitch(p.title):
             continue
         body = clean(f"{p.title} {(p.text or '')[:700]}")
+        if re.match(r"\s*(?:app name|package name|repo(?:sitory)?|license|category)\s*:", p.text or "", re.I):
+            continue  # a submission template, not someone describing a problem
         if _lacks_modifier(terms, body) or (_is_prospective(p) and not _first_person(p)):
             continue
         toks = [t for t in re.findall(r"[a-z][a-z'\-]{2,}", body.lower())]
@@ -781,7 +798,7 @@ def _complaint_themes(cands, terms: list[str], n: int = 6) -> list[dict]:
     for p, ph in pool:
         for x in ph:
             author_of.setdefault(x, set()).add((p.author or p.id).casefold())
-    common = {x for x, au in author_of.items() if len(au) >= 2}
+    common = {x for x, au in author_of.items() if len(au) >= min_authors}
     out, used = [], set()
     for phrase in sorted(common, key=lambda x: (-len(author_of[x]), x)):
         ps = [p for p, ph in pool if phrase in ph and p.id not in used]

@@ -1643,13 +1643,14 @@ def test_browse_find_filters_and_groups(monkeypatch):
         return S.Post("reddit", f"rd-{i}", title, body, f"https://r/{i}", f"user{i}", 20, comments, time.strftime("%Y-%m-%d"), {"site": sub})
     posts = [mk(1, "Cannot find proof of move in condition", "I paid and got stuck, no move in photos anywhere"),
              mk(2, "No move in photos, now stuck", "I cannot prove the damage, my landlord charged me, move in photos missing"),
+             mk(5, "Move in photos never taken, now stuck", "my landlord charged me and I have no move in photos at all", "Renters"),
              mk(3, "Funny cat", "", "pics"),
              mk(4, "I'm a reporter looking for people", "I'm a reporter with a news site working on a story")]
     monkeypatch.setattr(browse, "_one", lambda q, t: posts)
     monkeypatch.setattr(browse, "_hn", lambda a: [])
     browse._CACHE.clear()
     out = browse.find("renting", days=30)
-    assert out["posts_kept"] == 2 and all(p["title"] != "Funny cat" for p in out["posts"])
+    assert out["posts_kept"] == 3 and all(p["title"] != "Funny cat" for p in out["posts"])
     assert any("photos" in g["people_mention"] for g in out["problem_groups"])
 
 
@@ -1682,12 +1683,12 @@ def test_browse_area_must_appear_and_meme_subs_dropped(monkeypatch):
         return S.Post("reddit", f"rd-{i}", title, body, f"https://r/{i}", f"u{i}", score, comments, time.strftime("%Y-%m-%d"), {"site": sub})
     posts = [mk(1, "First time owning a cat, is this normal?", "I got stuck, my cat will not work with me", "cats", 105403),
              mk(2, "Client refuses to pay invoice, I am stuck", "I am a freelancer and my work is unpaid for weeks", "freelance"),
-             mk(3, "Boss ignores my overtime, I cannot get paid", "my work hours are not recorded and I am stuck", "jobs")]
+             mk(3, "Boss ignores my overtime work, I cannot get paid", "my work hours are not recorded and I am stuck", "jobs")]
     monkeypatch.setattr(browse, "_one", lambda q, t: posts)
     monkeypatch.setattr(browse, "_hn", lambda a: [])
     browse._CACHE.clear()
     out = browse.find("work")
-    assert {p["title"] for p in out["posts"]} == {posts[1].title, posts[2].title}
+    assert {p["title"] for p in out["posts"]} == {posts[2].title}  # the area word must be in the title or subreddit name
 
 
 def test_brief_counts_www_and_slash_variants_as_one_source():

@@ -35,6 +35,7 @@ mcp = FastMCP(
     instructions=INSTRUCTIONS,
     host=os.environ.get("HOST", "0.0.0.0"),
     port=int(os.environ.get("PORT", "8000")),
+    stateless_http=os.environ.get("STATELESS_HTTP", "1") == "1",  # a restart must not invalidate clients' sessions
 )
 
 

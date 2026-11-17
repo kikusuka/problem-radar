@@ -250,7 +250,7 @@ _CONSTRAINT_GROUPS = (
     (
         "offline operation",
         re.compile(r"\boffline\b|\bno[- ]internet\b|\bwithout (?:an? )?internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b", re.I),
-        re.compile(r"\boffline\b|\bwithout (?:an? )?internet\b|\bno[- ]internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bworks? without (?:an? )?internet\b", re.I),
+        re.compile(r"\boffline\b|\bwithout (?:an? )?internet\b|\bno[- ]internet\b|\bno network\b|\bwithout (?:a )?network\b|\bair[- ]gapped\b|\bworks? without (?:an? )?internet\b|\bon[- ]device\b|\bfully local\b|\bruns? locally\b|\blocal[- ]first\b|\bno cloud\b|\bself[- ]hosted\b|\bprivacy[- ]first\b", re.I),
     ),
     (
         "on-device/local execution",
@@ -259,7 +259,7 @@ _CONSTRAINT_GROUPS = (
     ),
     (
         "low-resource hardware",
-        re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b", re.I),
+        re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b(?!\s+(?:languages?|settings?|data|regions?|countries|communit\w+|contexts?))|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b", re.I),
         re.compile(r"\blow[- ]end\b|\blow[- ]ram\b|\blow[- ]memory\b|\blow[- ]resource\b|\blow[- ]spec\b|\blimited (?:ram|memory|resources?)\b|\bentry[- ]level\b|\bmemory[- ]constrained\b|\bolder (?:phones?|devices?)\b|\bold (?:phones?|devices?)\b|\bsmall (?:phones?|devices?)\b|\bbudget phones?\b|\b[1248] ?gb ram\b|\b2 ?gb memory\b", re.I),
     ),
     (

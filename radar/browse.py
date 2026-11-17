@@ -80,12 +80,12 @@ def find(area: str = "", days: int = 30, limit: int = 20, region: str = "") -> d
             continue
         if p.source.startswith("reddit") and not (R._first_person(p) or p.comments >= 3):
             continue
-        if area and not _mentions(area, f"{p.title} {(p.text or '')[:600]}", sub):
+        if area and not _mentions(area, p.title, sub):
             continue
         kept.append(p)
     kept.sort(key=lambda p: p.score + 2 * p.comments, reverse=True)
     cands = [(float(p.score + 2 * p.comments), p, "") for p in kept[:60]]
-    themes = R._complaint_themes(cands, [area] if area else [], n=8)
+    themes = R._complaint_themes(cands, [area] if area else [], n=8, min_authors=3)
     posts_out = [{"id": f"c{i}", "title": p.title, "snippet": (p.text or "")[:220], "url": p.url, "source": f"{p.source}/{p.meta.get('site')}" if p.meta.get("site") else p.source,
                   "date": (p.created or "")[:10], "score": p.score, "comments": p.comments} for i, (_, p, _) in enumerate(cands[:max(5, min(limit, 40))], 1)]
     out = {

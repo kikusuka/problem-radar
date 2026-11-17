@@ -117,7 +117,7 @@ _se_cooldown = {"until": 0.0}
 
 def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
     if time.time() < _se_cooldown["until"]:
-        return Result([], False, "rate limited (429); cooling down, set STACKEXCHANGE_KEY for a much larger free quota")
+        return Result([], False, "rate limited (429); cooling down" + ("" if os.environ.get("STACKEXCHANGE_KEY") else ", set STACKEXCHANGE_KEY for a much larger free quota"))
     params = {
         "order": "desc", "sort": "relevance", "q": query, "site": site,
         "pagesize": min(limit, 50), "filter": "withbody",
@@ -128,7 +128,8 @@ def se(query: str, limit: int = 20, site: str = "superuser", **_) -> Result:
     if data is None:
         if "429" in err:
             _se_cooldown["until"] = time.time() + 120  # stop hammering a limited quota
-            err += "; set STACKEXCHANGE_KEY (free) for a much larger quota"
+            if not os.environ.get("STACKEXCHANGE_KEY"):
+                err += "; set STACKEXCHANGE_KEY (free) for a much larger quota"
         return Result([], False, err)
     out = []
     for q in data.get("items", []):
