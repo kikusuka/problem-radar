@@ -1674,3 +1674,24 @@ def test_failure_modes_flags_abandoned_and_lists_complaints(monkeypatch):
     monkeypatch.setattr(S, "_get", lambda *a, **k: ({"items": [{"title": "Add offline mode", "reactions": {"total_count": 40}, "comments": 12, "html_url": "u"}]}, ""))
     fm = solved._failure_modes({"url": "https://github.com/a/b", "last_push": "2022-01-01", "description": "sync tool"}, ["offline"])
     assert fm["abandoned_risk"] is True and fm["top_open_complaints"][0]["reactions"] == 40 and "offline" in fm["constraint_gaps"]
+
+
+def test_browse_area_must_appear_and_meme_subs_dropped(monkeypatch):
+    from radar import browse, sources as S
+    def mk(i, title, body, sub, score=20, comments=6):
+        return S.Post("reddit", f"rd-{i}", title, body, f"https://r/{i}", f"u{i}", score, comments, time.strftime("%Y-%m-%d"), {"site": sub})
+    posts = [mk(1, "First time owning a cat, is this normal?", "I got stuck, my cat will not work with me", "cats", 105403),
+             mk(2, "Client refuses to pay invoice, I am stuck", "I am a freelancer and my work is unpaid for weeks", "freelance"),
+             mk(3, "Boss ignores my overtime, I cannot get paid", "my work hours are not recorded and I am stuck", "jobs")]
+    monkeypatch.setattr(browse, "_one", lambda q, t: posts)
+    monkeypatch.setattr(browse, "_hn", lambda a: [])
+    browse._CACHE.clear()
+    out = browse.find("work")
+    assert {p["title"] for p in out["posts"]} == {posts[1].title, posts[2].title}
+
+
+def test_brief_counts_www_and_slash_variants_as_one_source():
+    from radar import brief
+    ev = [{"url": "https://reddit.com/r/x/1"}, {"url": "https://www.reddit.com/r/x/1/"}]
+    import re
+    assert len({re.sub(r"^https?://(?:www\.)?", "", e["url"].strip().lower()).rstrip("/") for e in ev}) == 1

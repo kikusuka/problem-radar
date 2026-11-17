@@ -217,6 +217,15 @@ def check(problem: str, lens: str = "software") -> dict:
                     "relevance": round(rel, 2),
                 }))
             continue
+        if p.source in ("github_repo", "scholar", "arxiv") and not constraints_match(problem, text):
+            # A code library or paper rarely says "offline" or "no GPU" in its description even when it runs that way. Keep it,
+            # say which stated constraints its text does not show, and let the reader check its issues instead of hiding it.
+            gaps = missing_constraints(problem, text)
+            if p.source == "github_repo":
+                projects.append({**_project(p), "constraints_not_shown_in_description": gaps})
+            else:
+                papers.append({**_compact(p, rel, text), "constraints_not_shown": gaps})
+            continue
         if not constraints_match(problem, text):
             constraint_mismatch_count += 1
             constraint_near_misses.append((rel, {

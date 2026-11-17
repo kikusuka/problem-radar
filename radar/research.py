@@ -1136,7 +1136,7 @@ def research(niche: str, depth: str = "quick", limit: int = 25, sources: list[st
     kept = [p for _, p, _, _ in ranked]
     ranked = _diversify(ranked, limit)
     ranked.sort(key=lambda r: _is_pitch(r[1].title))  # stable: founders presenting their own product go after independent reports
-    cands = _candidates(raw, [niche] + also)
+    cands = _candidates(raw, [niche] + also, limit=max(12, min(CANDIDATE_LIMIT, limit * 2)))
     payload = {
         "niche": niche,
         "lens": lens,

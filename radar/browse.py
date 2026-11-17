@@ -5,8 +5,8 @@ research_niche answers "what is wrong with X". This answers "what is wrong, late
 them into separate problems by the phrases people share. A small current sample, not a census, and it says so."""
 from __future__ import annotations
 
+import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 
 from . import research as R
 from . import sources as S
@@ -14,6 +14,9 @@ from .ratelimit import limiter
 
 _CACHE: dict = {}
 TTL = 6 * 3600
+MEME_SUBS = {"cats", "sipstea", "wellthatsucks", "mildlyinfuriating", "amitheasshole", "aita", "starwars", "askreddit", "casualconversation", "relationship_advice", "relationships",
+             "tifu", "aww", "funny", "memes", "dankmemes", "unpopularopinion", "showerthoughts", "trueoffmychest", "offmychest", "bestofredditorupdates", "pettyrevenge",
+             "maliciouscompliance", "entitledpeople", "choosingbeggars", "insaneparents", "dogs", "cat", "petcare", "animalrescue", "wedding", "weddingplanning"}
 PHRASES = ["frustrated with", "is there a way to", "why is there no", "wish there was", "struggling with", "can't believe how hard"]
 
 
@@ -38,6 +41,19 @@ def _hn(area: str) -> list:
         return None
 
 
+def _mentions(area: str, text: str, sub: str) -> bool:
+    """The post is really about the area: a word of it (or its stem) is in the text or the subreddit name. A search for "work" must not
+    return a front-page cat post that happens to contain the word 'work'."""
+    low, sub = text.casefold(), sub.casefold()
+    for w in area.casefold().replace("-", " ").split():
+        if len(w) < 3:
+            continue
+        st = w[:max(4, len(w) - 3)] if len(w) > 5 else w
+        if st in sub or any(t.startswith(st) for t in re.findall(r"[a-z]{3,}", low)):
+            return True
+    return False
+
+
 def find(area: str = "", days: int = 30, limit: int = 20, region: str = "") -> dict:
     area = (area or "").strip()[:80]
     key = (area.casefold(), days, region.casefold())
@@ -47,9 +63,8 @@ def find(area: str = "", days: int = 30, limit: int = 20, region: str = "") -> d
     t = "week" if days <= 7 else "month" if days <= 45 else "year"
     where = f" {region}" if region else ""
     queries = [f"{area} {p}{where}".strip() for p in PHRASES[:4]]
-    with ThreadPoolExecutor(max_workers=5) as ex:
-        futs = [ex.submit(_one, q, t) for q in queries] + [ex.submit(_hn, area)]
-        results = [f.result() for f in futs]
+    futs = [R._SOURCE_EXECUTOR.submit(_one, q, t) for q in queries] + [R._SOURCE_EXECUTOR.submit(_hn, area)]  # the shared, capped pool
+    results = [f.result() for f in futs]
     failed = sum(1 for r in results if r is None)
     posts = [p for r in results if r for p in r]
     cutoff = time.strftime("%Y-%m-%d", time.gmtime(time.time() - max(days, 7) * 86400))
@@ -59,11 +74,13 @@ def find(area: str = "", days: int = 30, limit: int = 20, region: str = "") -> d
             continue
         seen.add(p.id)
         sub = (p.meta.get("site") or "").casefold()
-        if sub in R.VIRAL_SUBREDDITS or R._is_thin(p) or R._is_outreach(p) or R._is_pitch(p.title):
+        if sub in R.VIRAL_SUBREDDITS or sub in MEME_SUBS or p.score > 20000 or R._is_thin(p) or R._is_outreach(p) or R._is_pitch(p.title):
             continue
         if R._is_prospective(p) and not R._first_person(p):
             continue
         if p.source.startswith("reddit") and not (R._first_person(p) or p.comments >= 3):
+            continue
+        if area and not _mentions(area, f"{p.title} {(p.text or '')[:600]}", sub):
             continue
         kept.append(p)
     kept.sort(key=lambda p: p.score + 2 * p.comments, reverse=True)

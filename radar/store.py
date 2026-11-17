@@ -10,6 +10,8 @@ import re
 import time
 from pathlib import Path
 
+from . import text as _text
+
 DATA = Path(__file__).resolve().parent.parent / "data"
 BACKLOG = DATA / "backlog.json"
 FRICTION = DATA / "friction.json"
@@ -45,7 +47,7 @@ def log_friction(note: str, tags: list[str] | None = None) -> dict:
 
 def search_friction(query: str = "") -> list[dict]:
     items = _read(FRICTION)
-    words = [w for w in re.findall(r"[a-z0-9]+", query.lower()) if len(w) > 2]
+    words = [w for w in _text.tokens(query.lower()) if len(w) > 2 or _text.has_unspaced(w)]
     if not words:
         return items[-50:]
     return [i for i in items if any(w in (i["note"] + " " + " ".join(i["tags"])).lower() for w in words)]

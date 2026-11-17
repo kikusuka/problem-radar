@@ -5,6 +5,8 @@ that the evidence is real and labelled honestly. It does not score the problem.
 """
 from __future__ import annotations
 
+import re
+
 from urllib.parse import urlparse
 
 from . import verify
@@ -74,7 +76,7 @@ def check(brief: dict) -> dict:
             problems.append("claim not found in the cited text: " + r["claim"][:90])
         elif r["status"] == "partly_supported":
             warnings.append("claim only partly supported: " + r["claim"][:90])
-    urls = {_host(e["url"]) + e["url"] for e in ev if isinstance(e, dict) and e.get("url")}
+    urls = {re.sub(r"^https?://(?:www\.)?", "", e["url"].strip().lower()).rstrip("/") for e in ev if isinstance(e, dict) and e.get("url")}
     if ev and len(urls) < 2:
         warnings.append("only one distinct source: one voice is a lead, not a pattern")
     if ev and not any(str(e.get("label", "")).upper() == "DOCUMENTED" for e in ev if isinstance(e, dict)):
