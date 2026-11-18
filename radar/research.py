@@ -656,7 +656,7 @@ def _first_person(p: "S.Post") -> bool:
     return bool(_FIRST_PERSON.search(clean(f"{p.title} {(p.text or '')[:400]}")))
 
 
-_PITCH = re.compile(r"^\s*(?:\[(?:promo\w*|feedback(?: wanted)?|self[- ]?promo\w*|launch|release|app|project|dev)\]|introducing\b|app name:|i (?:made|wrote|developed|designed) (?:a|an|my|this)\b|check out my\b|\[?(?:show|launch) hn\]?|i (?:just )?(?:built|made|launched|created)|we (?:just )?(?:built|made|launched)|built a|early mvp|"
+_PITCH = re.compile(r"^\s*(?:[\w .+-]{2,30}\s[-:–—]\s+(?:a|an|the|open[- ]source|free|simple|offline|private|fast)\b|.{0,60}\bso i (?:built|made|created|wrote)\b|i (?:develop|am developing|have been developing)\b|\S+ \d\.\d\b.{0,12}\bfor (?:android|ios|windows|mac|linux)\b|.{0,40}\b(?:two|three|six|\d+) (?:months|weeks|years) into\b|\[(?:promo\w*|feedback(?: wanted)?|self[- ]?promo\w*|launch|release|app|project|dev)\]|introducing\b|app name:|i (?:made|wrote|developed|designed) (?:a|an|my|this)\b|check out my\b|\[?(?:show|launch) hn\]?|i (?:just )?(?:built|made|launched|created)|we (?:just )?(?:built|made|launched)|built a|early mvp|"
                     r"feedback (?:on|wanted)|validat\w+ (?:my|an?) idea|would you (?:use|pay)|i spent .{0,40}(?:building|researching)|found a validated problem|"
                     r"(?:i'?m|we'?re) (?:building|launching|working on))", re.I)
 
@@ -784,7 +784,7 @@ def _complaint_themes(cands, terms: list[str], n: int = 6, min_authors: int = 2)
     for _, p, _ in cands:
         if p.source in STRUCTURED or p.source in PAPERS or _is_thin(p) or _is_outreach(p) or _is_pitch(p.title):
             continue
-        body = clean(f"{p.title} {(p.text or '')[:700]}")
+        body = re.sub(r"https?://\S+|www\.\S+", " ", clean(f"{p.title} {(p.text or '')[:700]}"))
         if re.match(r"\s*(?:app name|package name|repo(?:sitory)?|license|category)\s*:", p.text or "", re.I):
             continue  # a submission template, not someone describing a problem
         if _lacks_modifier(terms, body) or (_is_prospective(p) and not _first_person(p)):

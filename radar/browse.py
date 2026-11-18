@@ -16,7 +16,7 @@ _CACHE: dict = {}
 TTL = 6 * 3600
 MEME_SUBS = {"cats", "sipstea", "wellthatsucks", "mildlyinfuriating", "amitheasshole", "aita", "starwars", "askreddit", "casualconversation", "relationship_advice", "relationships",
              "tifu", "aww", "funny", "memes", "dankmemes", "unpopularopinion", "showerthoughts", "trueoffmychest", "offmychest", "bestofredditorupdates", "pettyrevenge",
-             "maliciouscompliance", "entitledpeople", "choosingbeggars", "insaneparents", "dogs", "cat", "petcare", "animalrescue", "wedding", "weddingplanning"}
+             "maliciouscompliance", "entitledpeople", "choosingbeggars", "insaneparents", "topcharactertropes", "hatethissmug", "fantasy", "worldbuilding", "writing", "books", "movies", "television", "anime", "dogs", "cat", "petcare", "animalrescue", "wedding", "weddingplanning"}
 PHRASES = ["frustrated with", "is there a way to", "why is there no", "wish there was", "struggling with", "can't believe how hard"]
 
 

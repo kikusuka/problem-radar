@@ -23,7 +23,7 @@ LAYERS = {
 READABLE_HOSTS = ("news.ycombinator.com", "www.reddit.com", "reddit.com", "old.reddit.com")
 
 
-_JUNK = {"https", "http", "www", "com", "link", "links", "preview", "redd", "webp", "auto", "width", "format", "png", "jpg", "jpeg", "amp", "couple",
+_JUNK = {"app", "apps", "phone", "phones", "text", "tried", "fully", "copy", "share", "using", "used", "use", "want", "need", "got", "get", "https", "http", "www", "com", "link", "links", "preview", "redd", "webp", "auto", "width", "format", "png", "jpg", "jpeg", "amp", "couple",
          "months", "month", "moving", "enough", "first", "news", "things", "thing", "really", "still", "also", "just", "like", "much", "time", "year", "years"}
 _URL = re.compile(r"https?://\S+|www\.\S+|\b\S+\.(?:com|org|net|in|io|it)/\S*", re.I)
 

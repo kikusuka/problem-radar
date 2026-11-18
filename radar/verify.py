@@ -47,14 +47,15 @@ def remember(url: str, title: str = "", text: str = "", source: str = "", date: 
 
 def remember_posts(posts) -> None:
     for p in posts:
-        remember(p.url, p.title, clean(p.text or ""), p.source, p.created)
+        remember(p.url, p.title, clean(p.text or "") + f" ({p.score} points, {p.comments} comments)", p.source, p.created)  # so a cited score or count is checkable
 
 
 def remember_payload(payload: dict) -> None:
     """Re-register results served from the cache (the index is in memory and empty after a restart)."""
     for key in ("candidates", "top_posts", "near_misses"):
         for item in payload.get(key, []) or []:
-            remember(item.get("url", ""), item.get("title", ""), item.get("snippet", ""), item.get("source", ""), item.get("date", ""))
+            extra = f" ({item['score']} points, {item['comments']} comments)" if "score" in item and "comments" in item else ""
+            remember(item.get("url", ""), item.get("title", ""), (item.get("snippet", "") + extra).strip(), item.get("source", ""), item.get("date", ""))
 
 
 WORD_NUMBERS = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",

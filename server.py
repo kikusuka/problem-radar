@@ -30,6 +30,28 @@ INSTRUCTIONS = (
     "Results are public posts, not a survey; absence of results is not proof a problem does not exist."
 )
 
+def _run_sync_tools_in_threads() -> None:
+    """FastMCP calls a plain `def` tool directly on the event loop, so one slow search freezes every other request on the server
+    (a parallel batch of tools hit 20 s deadlines even for offline lookups). Run sync tools in worker threads instead."""
+    import functools
+
+    import anyio
+    from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata
+
+    orig = FuncMetadata.call_fn_with_arg_validation
+
+    async def patched(self, fn, fn_is_async, arguments_to_validate, arguments_to_pass_directly=None):
+        if fn_is_async:
+            return await orig(self, fn, fn_is_async, arguments_to_validate, arguments_to_pass_directly)
+
+        async def run_in_thread(**kw):
+            return await anyio.to_thread.run_sync(functools.partial(fn, **kw))
+        return await orig(self, run_in_thread, True, arguments_to_validate, arguments_to_pass_directly)
+    FuncMetadata.call_fn_with_arg_validation = patched
+
+
+_run_sync_tools_in_threads()
+
 mcp = FastMCP(
     "problem-radar",
     instructions=INSTRUCTIONS,

@@ -57,11 +57,26 @@ STUDENT_RUBRIC = {
 }
 
 
+_INTEREST_SYNONYMS = {
+    "train": ("transport", "commuting", "transit"), "rail": ("transport", "commuting"), "metro": ("transport", "commuting"), "bus": ("transport", "commuting"),
+    "commute": ("transport", "commuting"), "traffic": ("transport",), "hospital": ("health", "aging"), "doctor": ("health",), "clinic": ("health",),
+    "medicine": ("health",), "farm": ("agriculture", "food"), "farming": ("agriculture", "food"), "crop": ("agriculture",), "school": ("education", "student"),
+    "college": ("education", "student"), "exam": ("education", "student"), "computer": ("developer", "student", "software"), "science": ("student", "research"),
+    "cs": ("developer", "student"), "ai": ("developer", "student", "accessibility"), "ml": ("developer", "student"), "coding": ("developer",),
+    "programming": ("developer",), "software": ("developer",), "money": ("money", "finance"), "rent": ("housing",), "house": ("housing",),
+}
+
+
 def explore_domains(interest: str = "") -> dict:
     """Seed ideas for people who don't know where to start. Filter by a word like 'health' or 'city'."""
     words = [w for w in re.findall(r"[a-z]+", interest.lower()) if len(w) > 2]
     pool = DOMAINS + STUDENT_DOMAINS
-    picked = [d for d in pool if not words or any(w[:5] in (d["domain"] + " " + " ".join(d["niches"])).lower() for w in words)]
+    words = words + [x for w in words for x in _INTEREST_SYNONYMS.get(w, ())]
+
+    def hit(d: dict) -> bool:
+        toks = re.findall(r"[a-z]+", (d["domain"] + " " + " ".join(d["niches"])).lower())
+        return any(t == w or (len(w) >= 4 and t.startswith(w)) for w in words for t in toks)
+    picked = [d for d in pool if not words or hit(d)]
     return {
         "domains": picked or pool,
         "matched_your_interest": bool(picked) or not words,

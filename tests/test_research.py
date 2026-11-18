@@ -1696,3 +1696,13 @@ def test_brief_counts_www_and_slash_variants_as_one_source():
     ev = [{"url": "https://reddit.com/r/x/1"}, {"url": "https://www.reddit.com/r/x/1/"}]
     import re
     assert len({re.sub(r"^https?://(?:www\.)?", "", e["url"].strip().lower()).rstrip("/") for e in ev}) == 1
+
+
+def test_more_founder_pitches_and_domain_synonyms():
+    from radar import research as R, hunt
+    for t in ["I got tired of subscriptions, so I built a polished open-source alternative", "Dornio - a simple offline notes app",
+              "VoiceType 1.0 for Android is out", "Two months into building my app, feedback?"]:
+        assert R._is_pitch(t), t
+    assert not R._is_pitch("My landlord will not return my deposit")
+    assert hunt.explore_domains("train")["matched_your_interest"] is True
+    assert hunt.student_hunt(field="computer science AI", goal="hackathon", weeks=0.3)["seed_niches"]
