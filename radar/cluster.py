@@ -36,8 +36,12 @@ def clean(text: str) -> str:
     return html.unescape(TAGS.sub(" ", text or "")).strip()
 
 
+_URLS = re.compile(r"https?://\S+|www\.\S+", re.I)
+
+
 def keywords(text: str, extra_stop: set[str] | None = None) -> set[str]:
     stop = STOP | (extra_stop or set())
+    text = _URLS.sub(" ", text)  # a link's host and path are not what the post says
     found = {t for t in TOKEN.findall(text.lower()) if t not in stop}
     if not text.isascii():  # words in other scripts, or accented Latin, which the ASCII pattern cannot see
         found |= {t for t in _text.tokens(text) if not t.isascii() and (len(t) > 2 or _text.has_unspaced(t)) and t not in stop}

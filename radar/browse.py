@@ -9,6 +9,7 @@ import re
 import time
 
 from . import research as R
+from . import themes as TH
 from . import sources as S
 from .ratelimit import limiter
 
@@ -17,6 +18,7 @@ TTL = 6 * 3600
 MEME_SUBS = {"cats", "sipstea", "wellthatsucks", "mildlyinfuriating", "amitheasshole", "aita", "starwars", "askreddit", "casualconversation", "relationship_advice", "relationships",
              "tifu", "aww", "funny", "memes", "dankmemes", "unpopularopinion", "showerthoughts", "trueoffmychest", "offmychest", "bestofredditorupdates", "pettyrevenge",
              "maliciouscompliance", "entitledpeople", "choosingbeggars", "insaneparents", "topcharactertropes", "hatethissmug", "fantasy", "worldbuilding", "writing", "books", "movies", "television", "anime", "dogs", "cat", "petcare", "animalrescue", "wedding", "weddingplanning"}
+_PROBLEM_KINDS = {"help_request", "reported_complaint", "workaround_or_manual_process", "technical_failure_report"}
 PHRASES = ["frustrated with", "is there a way to", "why is there no", "wish there was", "struggling with", "can't believe how hard"]
 
 
@@ -80,6 +82,9 @@ def find(area: str = "", days: int = 30, limit: int = 20, region: str = "") -> d
             continue
         if p.source.startswith("reddit") and not (R._first_person(p) or p.comments >= 3):
             continue
+        kind = R.signal_profile(R.clean(f"{p.title} {(p.text or '')[:600]}"))["evidence_kind"]
+        if kind not in _PROBLEM_KINDS and not TH.families(R.clean(f"{p.title} {(p.text or '')[:600]}")):
+            continue  # a positive story or an AMA that happens to say "frustration" is not a problem report
         if area and not _mentions(area, p.title, sub):
             continue
         kept.append(p)

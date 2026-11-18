@@ -1641,7 +1641,7 @@ def test_browse_find_filters_and_groups(monkeypatch):
     from radar import browse, sources as S
     def mk(i, title, body, sub="Renters", comments=5):
         return S.Post("reddit", f"rd-{i}", title, body, f"https://r/{i}", f"user{i}", 20, comments, time.strftime("%Y-%m-%d"), {"site": sub})
-    posts = [mk(1, "Cannot find proof of move in condition", "I paid and got stuck, no move in photos anywhere"),
+    posts = [mk(1, "Cannot find proof of move in condition", "I paid and got stuck, no proof and no move in photos anywhere"),
              mk(2, "No move in photos, now stuck", "I cannot prove the damage, my landlord charged me, move in photos missing"),
              mk(5, "Move in photos never taken, now stuck", "my landlord charged me and I have no move in photos at all", "Renters"),
              mk(3, "Funny cat", "", "pics"),
@@ -1683,7 +1683,7 @@ def test_browse_area_must_appear_and_meme_subs_dropped(monkeypatch):
         return S.Post("reddit", f"rd-{i}", title, body, f"https://r/{i}", f"u{i}", score, comments, time.strftime("%Y-%m-%d"), {"site": sub})
     posts = [mk(1, "First time owning a cat, is this normal?", "I got stuck, my cat will not work with me", "cats", 105403),
              mk(2, "Client refuses to pay invoice, I am stuck", "I am a freelancer and my work is unpaid for weeks", "freelance"),
-             mk(3, "Boss ignores my overtime work, I cannot get paid", "my work hours are not recorded and I am stuck", "jobs")]
+             mk(3, "Boss ignores my overtime work, I cannot get paid", "my work hours are not recorded and I am stuck, he ignores me", "jobs")]
     monkeypatch.setattr(browse, "_one", lambda q, t: posts)
     monkeypatch.setattr(browse, "_hn", lambda a: [])
     browse._CACHE.clear()
