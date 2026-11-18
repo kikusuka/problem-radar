@@ -24,7 +24,10 @@ NUMBER = re.compile(r"\d[\d,]*(?:\.\d+)?\s*%?")
 
 def _norm(url: str) -> str:
     u = re.sub(r"^https?://(?:www\.|old\.|m\.)?", "", (url or "").strip().lower())
-    return re.split(r"[?#]", u)[0].rstrip("/")
+    path, _, query = u.split("#")[0].partition("?")
+    # Some sites identify the page by its query (Hacker News: item?id=1), so keep it and drop only tracking parameters.
+    keep = [q for q in query.split("&") if q and not re.match(r"(?:utm_\w+|ref|ref_src|fbclid|gclid|share|context)=", q)]
+    return path.rstrip("/") + ("?" + "&".join(keep) if keep else "")
 
 
 def remember(url: str, title: str = "", text: str = "", source: str = "", date: str = "") -> None:

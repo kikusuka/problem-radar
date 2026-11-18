@@ -106,3 +106,9 @@ def test_feed_filter_catches_more_personal_wellbeing_posts():
     for t in ("Ask HN: Imposter Syndrome Resources", "Ask HN: Help My Sanity", "Ask HN: I Need Advice", "Ask HN: mental health tools for devs?"):
         assert pulse.PERSONAL.search(t), t
     assert not pulse.PERSONAL.search("Ask HN: How do you handle late client payments?")
+
+
+def test_norm_keeps_hn_item_id_but_ignores_www_slash_and_tracking():
+    from radar import verify
+    assert verify._norm("https://news.ycombinator.com/item?id=1") != verify._norm("https://news.ycombinator.com/item?id=2")
+    assert verify._norm("https://www.reddit.com/r/x/1/?utm_source=a") == verify._norm("https://reddit.com/r/x/1")
