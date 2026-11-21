@@ -1706,3 +1706,12 @@ def test_more_founder_pitches_and_domain_synonyms():
     assert not R._is_pitch("My landlord will not return my deposit")
     assert hunt.explore_domains("train")["matched_your_interest"] is True
     assert hunt.student_hunt(field="computer science AI", goal="hackathon", weeks=0.3)["seed_niches"]
+
+
+def test_speech_synonyms_pass_topic_fit_and_trailing_dots_are_stripped():
+    from radar import pain
+    from radar.cluster import keywords
+    q = "offline voice transcription on Android"
+    assert pain.topic_fit(q, "Whisper based speech to text app for Android that works offline", "")
+    assert not pain.topic_fit(q, "Best pizza recipe for my android phone", "")
+    assert keywords("the box. and box, in a box!") == {"box"}

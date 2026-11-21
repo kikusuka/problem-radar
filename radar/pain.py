@@ -503,6 +503,9 @@ _TOPIC_ALIAS_GROUPS = {
         "phone", "phones", "smartphone", "smartphones", "handset", "handsets",
         "mobile device", "mobile devices", "android device", "android devices", "android",
     },
+    "voice_speech": {"voice", "speech", "spoken", "audio", "dictation", "dictate", "voice typing", "speech to text", "speech-to-text", "stt", "asr", "whisper", "wispr"},
+    "transcription": {"transcription", "transcriptions", "transcribe", "transcribing", "transcriber", "speech to text", "speech-to-text", "stt", "asr",
+                      "dictation", "voice typing", "captioning", "captions", "subtitles", "whisper"},
     "invoice": {"invoice", "invoices", "invoicing", "billing", "accounts receivable"},
     "reconciliation": {"reconciliation", "reconcile", "reconciling", "matching", "bookkeeping", "accounting"},
     "assistive_tech": {
