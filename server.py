@@ -1,4 +1,4 @@
-"""Problem Radar MCP server (v5).
+"""Kizuki MCP server (v5).
 
 Local (stdio, for Claude Desktop / Claude Code):   python server.py
 Hosted (HTTP, for Render / Northflank / etc.):     TRANSPORT=streamable-http python server.py
@@ -18,14 +18,14 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from radar import brief, browse, hunt, library, pulse, research, solved, sources, store, verify
 
 INSTRUCTIONS = (
-    "Problem Radar is a problem-finding lens, not a web search: it finds what people struggle with, in their own words, and shows how much "
+    "Kizuki is a problem-finding lens, not a web search: it finds what people struggle with, in their own words, and shows how much "
     "evidence stands behind it and what is missing. You do the judging; it fetches and checks. Follow these stages. "
     "1 ORIENT (pick a direction): student_hunt or plan_hunt if the person is unsure; find_problems_now to browse what people are stuck on lately with no topic (and whats_happening for petitions and Ask HN); "
     "find_known_problems for problems hackathons already published. "
     "2 DISCOVER: research_niche (pass region and local wording in `also`); read `candidates` yourself and group them by meaning. "
     "3 DIG: follow `next_moves`: read_thread (the detail is in the replies), search_pain with the words in `people_say`, drill into `communities`. "
     "4 TEST: check_if_solved, then validate_problem for the best two or three. Existing products are supply, not proof of demand. "
-    "5 DELIVER: write a brief in the shape of radar://brief, label each piece of evidence DOCUMENTED (official, measured or paper source) or "
+    "5 DELIVER: write a brief in the shape of kizuki://brief, label each piece of evidence DOCUMENTED (official, measured or paper source) or "
     "HYPOTHESIS (public posts only), say who is not heard, then run check_brief and fix what it flags before answering. "
     "Results are public posts, not a survey; absence of results is not proof a problem does not exist."
 )
@@ -53,7 +53,7 @@ def _run_sync_tools_in_threads() -> None:
 _run_sync_tools_in_threads()
 
 mcp = FastMCP(
-    "problem-radar",
+    "kizuki",
     instructions=INSTRUCTIONS,
     host=os.environ.get("HOST", "0.0.0.0"),
     port=int(os.environ.get("PORT", "8000")),
@@ -62,19 +62,19 @@ mcp = FastMCP(
 
 
 PRIVACY = (
-    "Problem Radar privacy: the server keeps no accounts and stores no personal data. Search terms you send are used to query "
+    "Kizuki privacy: the server keeps no accounts and stores no personal data. Search terms you send are used to query "
     "public sources (Hacker News, Reddit, Stack Exchange, GitHub, GitLab, arXiv, OpenAlex, Europe PMC, openFDA and public "
     "government datasets) and results may be cached on the server for up to 36 hours (Reddit content is held in memory only, never written to disk). Usernames of post authors are never returned."
 )
 TERMS = (
-    "Problem Radar terms: free, read-only research aid provided as is, without warranty. Results are public posts and records; "
+    "Kizuki terms: free, read-only research aid provided as is, without warranty. Results are public posts and records; "
     "check them yourself before relying on them. Do not use it to target or harass individuals."
 )
 
 
 @mcp.custom_route("/healthz", methods=["GET"])
 async def healthz(request: Request) -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "problem-radar"})
+    return JSONResponse({"ok": True, "service": "kizuki"})
 
 
 @mcp.custom_route("/privacy", methods=["GET"])
@@ -135,26 +135,26 @@ def find_problems_now(area: str = "", days: int = 30, limit: int = 20, region: s
 def check_brief(brief_json: dict) -> dict:
     """Last step before you answer. Pass your finished brief as an object with: statement, who, workaround, evidence (a list of
     {claim, url, label}), already_solved, who_is_missing, validation_plan, kill_criteria. Reports missing fields, links this server
-    never returned, claims the cited text does not support, and public posts wrongly labelled DOCUMENTED. Read radar://brief for
+    never returned, claims the cited text does not support, and public posts wrongly labelled DOCUMENTED. Read kizuki://brief for
     the full shape. ok=true means the brief is complete and its citations match, not that the problem is real."""
     return brief.check(brief_json)
 
 
-@mcp.resource("radar://brief")
+@mcp.resource("kizuki://brief")
 def brief_resource() -> str:
     """The shape of a finished problem brief and the rules for labelling evidence."""
     import json
     return json.dumps(brief.SCHEMA, indent=1)
 
 
-@mcp.resource("radar://rubric")
+@mcp.resource("kizuki://rubric")
 def rubric_resource() -> str:
     """The 10-point student viability rubric: score every candidate problem the same way."""
     from radar import painscore
     return painscore.RUBRIC
 
 
-@mcp.resource("radar://pulse")
+@mcp.resource("kizuki://pulse")
 def pulse_resource() -> str:
     """The current rolling feed of problems people are asking about right now."""
     import json
@@ -324,9 +324,9 @@ if os.environ.get("ENABLE_PERSONAL") == "1":  # local use only; on a hosted serv
 if os.environ.get("ENABLE_PERSONAL") == "1" and os.environ.get("TRANSPORT", "stdio") != "stdio":
     raise RuntimeError("ENABLE_PERSONAL is for local stdio use only; disable it for HTTP transports.")
 
-@mcp.resource("radar://method")
+@mcp.resource("kizuki://method")
 def method_resource() -> str:
-    """How Problem Radar judges evidence: what counts as demand, what is only a hint, and what it cannot see."""
+    """How Kizuki judges evidence: what counts as demand, what is only a hint, and what it cannot see."""
     from pathlib import Path
     f = Path(__file__).parent / "docs" / "METHOD.md"
     return f.read_text(encoding="utf-8") if f.exists() else INSTRUCTIONS

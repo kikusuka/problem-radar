@@ -1,6 +1,6 @@
 # Third-party notices
 
-Problem Radar remains a separate project. The following MIT-licensed materials have been adapted in specific, limited ways. Their notices are preserved here; no dependency on either upstream project is required at runtime.
+Kizuki remains a separate project. The following MIT-licensed materials have been adapted in specific, limited ways. Their notices are preserved here; no dependency on either upstream project is required at runtime.
 
 ## ScopeScrape
 

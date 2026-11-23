@@ -1,32 +1,85 @@
-# Problem Radar
+# Kizuki 気付き
 
-An MCP server that helps anyone find **a problem worth solving**: students looking for a class, capstone,
-science-fair or hackathon project; makers; researchers; teams; even organisations deciding where to focus.
-The fix can be software, hardware, policy or research.
+**Before you build, notice whether people really have the problem.**
 
-It starts from the person (goal, level, skills, time), searches communities, papers and official data for
-real evidence, checks whether the problem is **already solved**, and tells you honestly what each source covered.
+Kizuki is a free MCP server that lets Claude, ChatGPT, Gemini or Cursor look for real, unsolved problems in what people
+actually write: complaints, workarounds, help requests, bug trackers, papers and public records. It tells you what
+people do about the problem today, whether something already solves it, and why the existing tools fall short, then
+checks the answer's links and numbers before it is delivered.
 
-The LLM you chat with does the judging and writing. The server does the wide, boring retrieval, so the core
-needs **no LLM API key, no paid keys, and costs nothing to run.**
+*気付き (kizuki) is "noticing": the moment you see something others walked past.*
+
+## What it does that web search doesn't
+
+| Web search and deep research tend to | Kizuki |
+|---|---|
+| return listicles, vendor blogs and launch posts | separates founders presenting their own product from people describing their own trouble |
+| tell you "a tool for that exists" | shows the most-upvoted open issues of the existing tools and whether they look abandoned |
+| rank by how loud a topic is | adds a pain score from workarounds, money at stake, repetition and separate sources agreeing |
+| hide who is missing | reports which sources failed or were capped, who is not heard (offline, rural, non-English), and what it cannot see |
+| invent links and numbers | checks every cited link and number against what the server actually retrieved (`check_claims`, `check_brief`) |
+
+It is a sample of public posts, not a survey. It will not tell you how many people have a problem or how badly. It
+tells you where to look, and what to ask five real people.
+
+## Connect it
+
+Hosted (no install). Add this to your client's MCP settings:
+
+```json
+{ "mcpServers": { "kizuki": { "url": "https://<your-service>.onrender.com/mcp" } } }
+```
+
+In Claude: Settings, Connectors, add a custom connector, paste the URL. The free host sleeps when idle, so the first
+call after a quiet period can take up to a minute.
+
+Local: see [Run locally](#run-locally).
+
+## Try it
+
+- *"Use Kizuki. What are people stuck on right now?"* (browse mode, no topic needed)
+- *"Use Kizuki. Is there a real problem with landlords not returning security deposits, and is it already solved?"*
+- *"Use Kizuki. I'm a third-year CS student with 3 weeks for a hackathon. Find me something worth building, then check whether it already exists."*
+
+A good session runs: **find** (`find_problems_now`, `research_niche`) then **dig** (`read_thread`, `search_pain`)
+then **check what exists** (`check_if_solved`, `validate_problem`) then **deliver** a short brief and run
+`check_brief`. The `kizuki://rubric` resource gives a 10-point scale for deciding whether a problem is worth a
+student's time.
 
 ## Tools
 
 | Tool | Use it to |
 |---|---|
-| `student_hunt(level, field, goal, weeks, ...)` | **Students start here.** A project that fits your level, time, field and goal |
-| `plan_hunt(goal, interests, skills, ...)` | Everyone else: turn your situation into a research plan |
-| `explore_domains(interest)` | Seed niches when you have no starting point (includes campus and student life) |
-| `research_niche(niche, lens, goal)` | Ranked complaints, themes, groupings and a coverage report |
-| `find_research_gaps(topic)` | Recent papers that call something open, understudied or future work |
-| `check_if_solved(problem, lens)` | Existing projects, products, papers and public actions, with a hint and a gap guide |
+| `find_problems_now(area, days)` | Browse what people are stuck on lately, no topic needed; returns separate problem groups with evidence links |
+| `research_niche(niche, lens, goal, region)` | Dig into one topic: ranked posts, problem groups with pain scores, coverage, blind spots |
+| `check_if_solved(problem, lens)` | Existing projects, products, papers and petitions, plus why the top projects fall short |
 | `validate_problem(problem, lens)` | Willingness to pay, workarounds, and fix-specific checks |
-| `search_pain(query)` | Follow up with your own wording; cover places or topics the built-ins miss |
-| `hackathon_ideas(theme)` | Research framed for a 24-hour build and a 3-minute demo |
+| `read_thread(url)` | The replies behind a post, where the real detail usually is |
+| `search_pain(query)` | Follow up in people's own words; cover places the built-ins miss |
+| `find_research_gaps(topic)` | Recent papers that call something open or understudied |
+| `whats_happening()` | Live Ask HN and UK petitions |
+| `check_claims`, `check_brief` | Verify links, numbers and evidence labels before delivering |
+| `student_hunt`, `plan_hunt`, `explore_domains`, `hackathon_ideas`, `find_known_problems` | Starting points for students and hackathons |
 | `source_status()` | See which sources and optional keys are active |
 | Personal tools | Local only (`ENABLE_PERSONAL=1`): backlog and your own friction log |
 
-Try: *"Use problem-radar. I'm a mechanical engineering student with 6 months for a capstone and 3 teammates. Find a project, then check if it's already solved."*
+## Honest limits
+
+- Posts show complaints, not proven demand. Talk to five people who have the problem before you commit.
+- Sources skew English-speaking and online. Offline, rural, elderly and informal workers are under-represented, and
+  the results say so.
+- Reddit is a best-effort source and may become unavailable (its public API access is due to end in 2027). The
+  server keeps working without it.
+- Free hosting means shared quotas and slow first calls.
+- Grouping is by shared words, not meaning. Read the posts and group them yourself; Kizuki gives hints.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Third-party notices: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+---
+
+## Technical reference
 
 ## Lenses and sources
 
@@ -136,12 +189,12 @@ pip install -r requirements.txt
 python server.py            # stdio
 ```
 
-Claude Code: `claude mcp add problem-radar -- python /full/path/to/server.py`
+Claude Code: `claude mcp add kizuki -- python /full/path/to/server.py`
 
 Claude Desktop config:
 
 ```json
-{ "mcpServers": { "problem-radar": { "command": "python", "args": ["/full/path/to/server.py"] } } }
+{ "mcpServers": { "kizuki": { "command": "python", "args": ["/full/path/to/server.py"] } } }
 ```
 
 ## Free hosting
@@ -172,7 +225,7 @@ available Reddit request units. Add free credentials to improve direct-search ac
 
 1. Go to reddit.com/prefs/apps, choose "create another app", type **script**, any name, redirect URI `http://localhost`.
 2. Copy the client ID (under the app name) and the secret.
-3. Set `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` (for example `problem-radar/4.2 by u/your-name`)
+3. Set `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `REDDIT_USER_AGENT` (for example `kizuki/4.2 by u/your-name`)
    as environment variables on your host. Only these three are needed: the server uses Reddit's read-only app login,
    so never set a Reddit username or password. If you already have a script app, reuse it. Keep the secret out of git.
 4. Check `source_status`: Reddit should say `oauth`, and a research run should show Reddit as `ok`.

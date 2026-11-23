@@ -191,7 +191,7 @@ def student_hunt(level: str = "undergraduate", field: str = "", goal: str = "cla
             + (" For a research goal use find_research_gaps." if lens == "research" else ""),
             "3. Score candidates with student_rubric. 'Feasible for you' must use the profile above.",
             "4. For the top 3, call check_if_solved, then validate_problem on the best two.",
-            "5. Present one recommended project, one backup, a week-by-week outline that fits the time, and what to check with a teacher or real user before starting. Run check_brief on the brief (shape: radar://brief) before you answer.",
+            "5. Present one recommended project, one backup, a week-by-week outline that fits the time, and what to check with a teacher or real user before starting. Run check_brief on the brief (shape: kizuki://brief) before you answer.",
         ],
         "student_rubric": STUDENT_RUBRIC,
         "analysis_guide": build_guide(lens, goal),

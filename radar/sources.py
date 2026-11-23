@@ -27,7 +27,7 @@ import xml.etree.ElementTree as ET
 
 import httpx
 
-UA = "problem-radar/0.2 (open-source research tool)"
+UA = "kizuki/0.2 (open-source research tool)"
 TIMEOUT = 12.0
 TAGS = re.compile(r"<[^>]+>")
 
@@ -161,7 +161,7 @@ def startup_request_cost(provider: str) -> int:
 
 
 def _reddit_ua() -> dict:
-    """Reddit asks for a unique, descriptive User-Agent, e.g. 'problem-radar/4.2 by u/yourname'."""
+    """Reddit asks for a unique, descriptive User-Agent, e.g. 'kizuki/4.2 by u/yourname'."""
     ua = os.environ.get("REDDIT_USER_AGENT")
     return {"User-Agent": ua} if ua else {}
 

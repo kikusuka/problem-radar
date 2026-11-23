@@ -1,0 +1,12 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.kikusuka/kizuki",
+  "title": "Kizuki",
+  "description": "Find real, unsolved problems from what people write, check if they are already solved, and verify the citations. Free, no key needed.",
+  "version": "0.3.0",
+  "repository": { "url": "https://github.com/kikusuka/kizuki", "source": "github" },
+  "websiteUrl": "https://github.com/kikusuka/kizuki",
+  "remotes": [
+    { "type": "streamable-http", "url": "https://REPLACE-WITH-YOUR-RENDER-SERVICE.onrender.com/mcp" }
+  ]
+}

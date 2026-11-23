@@ -368,14 +368,14 @@ def test_reddit_uses_app_login_with_user_agent_and_never_a_password(monkeypatch)
     monkeypatch.setitem(S._reddit_token, "exp", 0.0)
     monkeypatch.setenv("REDDIT_CLIENT_ID", "id123")
     monkeypatch.setenv("REDDIT_CLIENT_SECRET", "secret123")
-    monkeypatch.setenv("REDDIT_USER_AGENT", "problem-radar/4.2 by u/tester")
+    monkeypatch.setenv("REDDIT_USER_AGENT", "kizuki/4.2 by u/tester")
     res = S.reddit("grip aid", 5)
     assert res.ok and res.posts[0].title == "Need a better grip aid"
     token_call, search_call = calls
     assert token_call["data"] == {"grant_type": "client_credentials"} and token_call["auth"] == ("id123", "secret123")
     assert "password" not in str(token_call["data"]).lower()
     assert search_call["url"].startswith("https://oauth.reddit.com/") and search_call["headers"]["Authorization"] == "bearer tok123"
-    assert search_call["headers"]["User-Agent"] == "problem-radar/4.2 by u/tester"
+    assert search_call["headers"]["User-Agent"] == "kizuki/4.2 by u/tester"
     assert S.enabled()["reddit"]["note"] == "oauth"
 
 

@@ -286,7 +286,7 @@ def check(problem: str, lens: str = "software") -> dict:
         "papers": papers[:6],
         "public_actions": actions[:5],
         "gap_guide": GAP_ANGLES + " For the top projects, `failure_modes` lists the open issues users upvote most and whether the project looks abandoned: that is usually where the opening is.",
-        "rubric_hint": "Score what survives against radar://rubric (8-10 build, 5-7 narrow the wedge, 0-4 skip).",
+        "rubric_hint": "Score what survives against kizuki://rubric (8-10 build, 5-7 narrow the wedge, 0-4 skip).",
         "llm_web_search_suggestions": (
             [f"{variants[0]} buy price", f"{variants[0]} open source", f"best {variants[0]} alternatives", f"{variants[0]} reviews complaints"]
             if lens in ("hardware", "software", "any") else web_suggestions(variants[0], lens)

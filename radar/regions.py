@@ -1,4 +1,4 @@
-"""Region awareness. Problem Radar is worldwide by default; a region narrows and biases the search when the person asks.
+"""Region awareness. Kizuki is worldwide by default; a region narrows and biases the search when the person asks.
 
 The chatting model decides the region from the conversation (and the person can change it), then passes it in.
 We never guess it on the server. A region does three things:

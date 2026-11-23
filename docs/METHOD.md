@@ -1,6 +1,6 @@
-# What Problem Radar claims, and what it does not
+# What Kizuki claims, and what it does not
 
-Problem Radar retrieves public evidence about a problem and says how much of it there is and what kind. It does not measure how
+Kizuki retrieves public evidence about a problem and says how much of it there is and what kind. It does not measure how
 common or how severe a problem is. Every field below follows from that rule.
 
 ## What counts as evidence
@@ -46,12 +46,12 @@ set built from reported failures (`tests/test_relevance_golden.py`): add a row w
 
 ## The protocol (how a host model should work with this server)
 Orient (student_hunt / plan_hunt, whats_happening, find_known_problems) -> Discover (research_niche) -> Dig (read_thread, search_pain,
-communities) -> Test (check_if_solved, validate_problem) -> Deliver (a brief in the shape of `radar://brief`, then check_brief).
+communities) -> Test (check_if_solved, validate_problem) -> Deliver (a brief in the shape of `kizuki://brief`, then check_brief).
 The server never scores a problem and never writes the brief. `check_brief` is deterministic: it checks that required fields exist,
 that cited links were really returned, that cited text supports the claim, and that public posts are not labelled DOCUMENTED.
 `ok` means complete and consistent, not true.
 
-## Current-problems feed (`whats_happening`, `radar://pulse`)
+## Current-problems feed (`whats_happening`, `kizuki://pulse`)
 A scheduled job (`python refresh.py pulse`) saves `data/pulse.json` daily from recent Ask HN questions and the most-signed open UK
 petitions. If the file is missing or older than 3 days, the server builds a live copy and says so. Reddit is excluded because its
 content may not be stored. The feed is a small sample that leans toward developers and the UK; it never claims to be a census.

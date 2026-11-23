@@ -107,7 +107,7 @@ def _bounded_string_list(values, name: str, max_items: int = MAX_QUERY_LIST_ITEM
 # may still be running in Python threads, so never create a fresh pool per request.
 _SOURCE_WORKERS = 8
 _MAX_IN_FLIGHT_JOBS = 32
-_SOURCE_EXECUTOR = ThreadPoolExecutor(max_workers=_SOURCE_WORKERS, thread_name_prefix="problem-radar-source")
+_SOURCE_EXECUTOR = ThreadPoolExecutor(max_workers=_SOURCE_WORKERS, thread_name_prefix="kizuki-source")
 _SOURCE_SLOTS = BoundedSemaphore(_MAX_IN_FLIGHT_JOBS)
 
 PAPERS = {"scholar", "europepmc", "arxiv"}
